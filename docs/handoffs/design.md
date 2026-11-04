@@ -1,5 +1,9 @@
 # Documento de Traspaso (Handoff) de Diseño y Sistema UI
 
+> [!NOTE]
+> **DOCUMENTO HISTÓRICO - FASE DE CONSTRUCCIÓN INICIAL (Sesión 2)**  
+> Este documento registra la entrega de diseño, tokens y componentes UI («La Libreta») de la fase inicial. Para la especificación activa del sistema de diseño, consulta [docs/design-system.md](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/design-system.md) y [AGENTS.md](file:///C:/Users/djcha/Documents/Code/Ingresos/AGENTS.md).
+
 > **Emitido por**: Sesión 2 (Diseño y Sistema UI)
 > **Fecha**: 2026-11-04
 > **Destinatarios**: Sesión 4 (Frontend e Integración), Sesión 1 (Arquitectura y Coordinación)
@@ -110,9 +114,9 @@ Archivos que **no** toqué: `package.json`, `tsconfig*`, `vite.config.ts`, `.env
 
 | Componente | Props principales |
 | :--- | :--- |
-| `Button` | `variant` (`primary\|secondary\|ghost\|danger`, por defecto `secondary`), `size` (`sm\|md\|lg`), `loading`, `iconStart?`, `iconEnd?`, `fullWidth?` + todas las de `<button>` |
-| `StatusChip` | `kind` (`activity\|payment`), `value` (`ActivityStatus \| PaymentStatus`), `size` (`sm\|md`) |
-| `Alert` | `variant` (`success\|error\|info`), `title?`, `children`, `action?`, `onDismiss?`, `placement` (`inline\|floating`), `role?` |
+| `Button` | `variant` (`primary|secondary|ghost|danger`, por defecto `secondary`), `size` (`sm|md|lg`), `loading`, `iconStart?`, `iconEnd?`, `fullWidth?` + todas las de `<button>` |
+| `StatusChip` | `kind` (`activity|payment`), `value` (`ActivityStatus | PaymentStatus`), `size` (`sm|md`) |
+| `Alert` | `variant` (`success|error|info`), `title?`, `children`, `action?`, `onDismiss?`, `placement` (`inline|floating`), `role?` |
 | `EmptyState` | `title`, `description?`, `action?`, `icon?` |
 | `Spinner` | `size?`, `label?` (con `label` queda en `role="status"`) |
 | `Skeleton` | `className?` (el contenedor padre pone `role="status"`) |
@@ -138,7 +142,7 @@ Archivos que **no** toqué: `package.json`, `tsconfig*`, `vite.config.ts`, `.env
 | `SearchField` | mismas, con el icono de búsqueda ya puesto |
 | `TextArea` | `label`, `hint?`, `error?`, `rows` (4), + `<textarea>` |
 | `Select` | `label`, `hint?`, `error?`, `options: {value,label,disabled?}[]`, `placeholder?`, + `<select>` nativo |
-| `MoneyField` | `label`, `value: number \| null`, `onValueChange(v)`, `hint?`, `error?`, `showCode?` |
+| `MoneyField` | `label`, `value: number | null`, `onValueChange(v)`, `hint?`, `error?`, `showCode?` |
 | `DateField` | `label`, `hint?`, `error?` + `<input type="date">` |
 | `SegmentedControl` | `name`, `value`, `options: {value,label,icon?}[]`, `onChange`, `legend`, `showLegend?`, `size?`, `fullWidth?` |
 | `Switch` | `checked`, `onChange(bool)`, `label`, `description?` |
@@ -173,11 +177,11 @@ Archivos que **no** toqué: `package.json`, `tsconfig*`, `vite.config.ts`, `.env
 
 | Componente | Props principales |
 | :--- | :--- |
-| `Money` | `value: number \| null`, `tone` (`default\|received\|owed\|muted`), `emphasis` (`hero\|display\|strong\|normal`), `showCode?`, `fallback?` |
+| `Money` | `value: number | null`, `tone` (`default|received|owed|muted`), `emphasis` (`hero|display|strong|normal`), `showCode?`, `fallback?` |
 | `MetricCard` | `label`, `value`, `tone?`, `detail?`, `footer?` |
 | `BalanceRail` | `total`, `received`, `pending`, `cancelled?`, `receivedLabel?`, `pendingLabel?`, `size?`, `showAmounts?` |
-| `Panel` | `title?`, `description?`, `actions?`, `padding` (`default\|flush`), `children` |
-| `KeyValue` | `items: {label,value}[]`, `layout` (`inline\|stacked`) |
+| `Panel` | `title?`, `description?`, `actions?`, `padding` (`default|flush`), `children` |
+| `KeyValue` | `items: {label,value}[]`, `layout` (`inline|stacked`) |
 | `DataTable` | ver abajo |
 
 `DataTable<T>`:
@@ -212,7 +216,7 @@ En `md+` renderiza tabla real; por debajo apila cada registro. Si hay `onRowClic
 
 | Componente | Props principales |
 | :--- | :--- |
-| `Dialog` | `open`, `onClose`, `title`, `description?`, `footer?`, `size` (`md\|lg`), `dismissOnBackdrop?` (true), `children` |
+| `Dialog` | `open`, `onClose`, `title`, `description?`, `footer?`, `size` (`md|lg`), `dismissOnBackdrop?` (true), `children` |
 | `ConfirmDialog` | `open`, `onCancel`, `onConfirm`, `title`, `message`, `confirmLabel?`, `cancelLabel?`, `destructive?`, `loading?` |
 
 ```tsx

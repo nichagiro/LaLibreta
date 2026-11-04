@@ -1,5 +1,9 @@
 # Documento de Traspaso (Handoff) de Frontend e Integración Funcional
 
+> [!NOTE]
+> **DOCUMENTO HISTÓRICO - FASE DE CONSTRUCCIÓN INICIAL (Sesión 4)**  
+> Este documento registra la entrega de vistas, flujos de integración, generación de PDF y pruebas automatizadas de la fase de construcción inicial. Para las directrices activas de mantenimiento del frontend, consulta [AGENTS.md](file:///C:/Users/djcha/Documents/Code/Ingresos/AGENTS.md) y [README.md](file:///C:/Users/djcha/Documents/Code/Ingresos/README.md).
+
 > **Emitido por**: Sesión 4 (Frontend e Integración Funcional)  
 > **Fecha**: 2026-11-04  
 > **Destinatarios**: Sesión 1 (Arquitectura y Gobernanza), Sesión 2 (Diseño y Sistema UI), Sesión 3 (Persistencia y Backend), Usuario / Propietario.

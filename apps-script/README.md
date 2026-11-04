@@ -1,50 +1,36 @@
 # Despliegue de Google Apps Script (Persistencia Directa)
 
-Este proyecto utiliza Google Sheets como base de datos privada a través de una **Web App de Google Apps Script**, sin necesidad de servidores intermedios ni exposición de claves privadas de Google Cloud en el cliente.
+Este proyecto utiliza **Google Sheets** como base de datos privada mediante una **Web App en Google Apps Script**, prescindiendo de servidores propios.
 
-> **Seguridad:** `VITE_APP_AUTH_TOKEN` se publica en el bundle estático y no es un secreto robusto. Mantén el despliegue privado/de uso personal. No compartas la hoja y no pongas credenciales privadas de Google en `VITE_*`. Consulta la guía completa en [docs/backend-setup.md](../docs/backend-setup.md).
+> [!WARNING]
+> **Seguridad y Acceso**: `VITE_APP_AUTH_TOKEN` se compila en el bundle estático y es visible en el navegador. Mantén la hoja privada y utiliza este mecanismo exclusivamente para uso personal. Para mayores detalles de arquitectura, consulta [`docs/backend-setup.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/backend-setup.md).
 
 ---
 
-## Pasos para la Configuración
+## Estado Actual de la Integración
 
-1. **Crear o Abrir la Hoja de Google Sheets**:
-   - Crea una hoja de cálculo nueva en Google Drive (ej: `Control de Ingresos - DJCHA`).
-   - Mantenla **100% privada** (no compartir públicamente).
+- **Backend (`Code.gs`)**: 100% implementado y validado mediante 12 pruebas automatizadas locales (`npm run test:backend`).
+- **Despliegue en Google**: Pendiente de realización por parte del propietario en su cuenta personal de Google Drive.
 
-2. **Abrir el Editor de Apps Script**:
-   - En la hoja de cálculo, ve al menú superior: `Extensiones` > `Apps Script`.
+---
 
+## Pasos Rápidos de Despliegue
+
+1. **Crear la Hoja de Google Sheets**:
+   - En Google Drive, crea una hoja de cálculo nueva y mantenla privada (sin compartir con terceros).
+2. **Abrir el Editor**:
+   - Menú superior: **Extensiones → Apps Script**.
 3. **Copiar el Código**:
-   - Reemplaza todo el contenido del archivo `Código.gs` con el código presente en [Code.gs](file:///C:/Users/djcha/Documents/Code/Ingresos/apps-script/Code.gs).
-
-4. **Configurar el Token de Seguridad**:
-   - En el menú lateral izquierdo de Apps Script, haz clic en el ícono de engranaje ⚙️ **Configuración del proyecto**.
-   - Baja a la sección **Propiedades de la secuencia de comandos**.
-   - Haz clic en **Agregar propiedad**:
-     - **Propiedad**: `AUTH_TOKEN`
-     - **Valor**: Una contraseña o token largo y seguro que tú elijas (ej: `clave_secreta_ingresos_2026`).
-   - Guarda los cambios.
-
-5. **Implementar como Aplicación Web (Web App)**:
-   - En la esquina superior derecha, haz clic en **Implementar** > **Nueva implementación**.
-   - Selecciona el tipo: ⚙️ **Aplicación web**.
-   - Configura:
-     - **Descripción**: `API v1 Control de Ingresos`
-     - **Ejecutar como**: `Yo (tu_cuenta@gmail.com)` *(Fundamental: así el script usa tus permisos privados de acceso a la hoja)*.
-     - **Quién tiene acceso**: `Cualquier usuario` *(Permite que el frontend envíe peticiones POST; el script filtrará el acceso validando el `AUTH_TOKEN`)*.
-   - Haz clic en **Implementar** y autoriza los permisos solicitados en la ventana emergente.
-
-6. **Copiar la URL Web App a `.env`**:
-   - Copia la **URL de la aplicación web** generada (termina en `/exec`).
-   - En el proyecto frontend, crea un archivo `.env` basado en `.env.example`:
-     ```env
-     VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/TU_SCRIPT_ID/exec
-     VITE_APP_AUTH_TOKEN=la_misma_clave_que_pusiste_en_script_properties
-     ```
-
+   - Pega todo el contenido de [`Code.gs`](file:///C:/Users/djcha/Documents/Code/Ingresos/apps-script/Code.gs) en el archivo principal del editor.
+4. **Configurar el Token en Script Properties**:
+   - ⚙️ **Configuración del proyecto → Propiedades de la secuencia de comandos**.
+   - Agrega la propiedad `AUTH_TOKEN` con un valor aleatorio y seguro.
+5. **Implementar como Web App**:
+   - **Implementar → Nueva implementación → Aplicación web**.
+   - **Ejecutar como**: `Yo (tu_cuenta@gmail.com)`.
+   - **Quién tiene acceso**: `Cualquier usuario`.
+   - Haz clic en **Implementar** y autoriza los permisos requeridos.
+6. **Configurar en el Frontend**:
+   - En tu archivo `.env` local, asigna la URL `/exec` generada a `VITE_APPS_SCRIPT_URL` y tu token a `VITE_APP_AUTH_TOKEN`.
 7. **Probar la Conexión**:
-   - Ejecuta `npm run dev` en el frontend y haz clic en el botón **"Probar conexión (Ping)"** en la pantalla principal.
-   - El sobre JSON, no el estado HTTP, comunica el resultado. Apps Script `ContentService` no permite fijar estados HTTP 4xx/5xx.
-
-> No despliegues ni ejecutes operaciones contra una hoja con datos reales durante pruebas. Usa una hoja de desarrollo autorizada.
+   - Abre la aplicación, navega a **Configuración** y haz clic en **Probar Conexión con Apps Script (Ping)**.

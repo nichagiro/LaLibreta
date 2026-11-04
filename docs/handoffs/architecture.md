@@ -1,5 +1,9 @@
 # Documento de Traspaso (Handoff) de Arquitectura y Coordinación
 
+> [!NOTE]
+> **DOCUMENTO HISTÓRICO - FASE DE CONSTRUCCIÓN INICIAL (Sesión 1)**  
+> Este documento registra las directrices emitidas durante la fase de construcción modular inicial. Para las directrices activas de mantenimiento del sistema, consulta [AGENTS.md](file:///C:/Users/djcha/Documents/Code/Ingresos/AGENTS.md) y [docs/architecture.md](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/architecture.md).
+
 > **Emitido por**: Sesión 1 (Arquitectura y Coordinación Técnica)  
 > **Fecha**: 2026-11-04  
 > **Destinatarios**: Sesión 2 (Diseño y Sistema UI), Sesión 3 (Persistencia y Google Sheets), Sesión 4 (Frontend e Integración).
@@ -66,7 +70,7 @@ Construir las vistas de negocio, formularios, filtros por período, historial de
 1. Lee obligatoriamente la skill: [SKILL.md](file:///C:/Users/djcha/Documents/Code/Ingresos/.agents/skills/vercel-react-best-practices/SKILL.md) (aplicando las reglas para React SPA / Vite).
 2. Zona autorizada de trabajo:
    - `src/features/` (clientes, actividades, pagos, categorías, resumen).
-   - Módulo de generación de PDF en cliente (utilizando `@react-pdf/renderer` o motor similar ligero).
+   - Módulo de generación de PDF en cliente (utilizando `@react-pdf/renderer` o motor similar ligero; *nota histórica: se implementó finalmente con `pdf-lib`*).
 3. Asegurar que el PDF nunca incluya `internal_notes` y no use terminología de factura electrónica de la DIAN.
 
 ---

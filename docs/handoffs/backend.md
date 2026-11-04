@@ -1,5 +1,9 @@
 # Handoff de Backend y Persistencia
 
+> [!NOTE]
+> **DOCUMENTO HISTÓRICO - FASE DE CONSTRUCCIÓN INICIAL (Sesión 3)**  
+> Este documento registra las decisiones y pruebas de persistencia entregadas durante la fase de construcción modular inicial. Para las directrices activas de mantenimiento del backend, consulta [docs/backend-setup.md](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/backend-setup.md), [apps-script/README.md](file:///C:/Users/djcha/Documents/Code/Ingresos/apps-script/README.md) y [AGENTS.md](file:///C:/Users/djcha/Documents/Code/Ingresos/AGENTS.md).
+
 ## Alcance implementado
 
 Web App de Google Apps Script en `apps-script/Code.gs`, con persistencia en la hoja vinculada. No se implementaron pantallas ni estilos. La hoja permanece privada; ninguna prueba accedió a Google.

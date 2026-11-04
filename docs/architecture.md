@@ -2,29 +2,34 @@
 
 ## 1. Visión General de la Arquitectura
 
-El sistema está diseñado bajo un modelo **Serverless / Backendless**, optimizado para la máxima ligereza, cero costos de hosting de servidores y cero mantenimiento de infraestructura:
+El sistema está diseñado bajo un modelo **Serverless / Backendless**, optimizado para operar con cero costos fijos de hosting y cero mantenimiento de servidores dedicados:
 
 ```mermaid
 flowchart TD
-    subgraph Cliente ["Navegador Web (Frontend SPA)"]
+    subgraph Browser ["Navegador Web (Frontend SPA)"]
         UI["React 18 + Vite (dist/ Estático)"]
-        APIClient["sheets-api.ts (Adaptador Fetch)"]
-        PDFGen["Generador de PDF en Cliente"]
-        UI --> APIClient
+        API["Servicio Centralizado de API (api.ts)"]
+        SheetsClient["Adaptador Remoto (sheets-api.ts)"]
+        MockAdapter["Adaptador en Memoria (mock-adapter.ts)"]
+        PDFGen["Generador de PDF en Cliente (pdf-lib)"]
+
+        UI --> API
         UI --> PDFGen
+        API -->|"Modo Producción"| SheetsClient
+        API -->|"Modo Prueba / Fallback"| MockAdapter
     end
 
-    subgraph GoogleCloud ["Infraestructura Google (Nativa)"]
-        WebApp["Google Apps Script Web App<br/>(Ejecuta en context del propietario)"]
-        Lock["LockService (Control Concurrencia)"]
-        PrivateSheet[("Google Sheets Privado<br/>Pestañas: Clientes, Actividades, Pagos, etc.")]
-        
+    subgraph GoogleInfra ["Infraestructura Google (Nativa)"]
+        WebApp["Google Apps Script Web App<br/>(Ejecuta con permisos del propietario)"]
+        Lock["LockService (Control Concurrencia - 10s)"]
+        PrivateSheet[("Google Sheets Privado<br/>Pestañas: Clientes, Categorias, Actividades, Pagos, Configuracion")]
+
         WebApp --> Lock
         Lock --> PrivateSheet
     end
 
-    APIClient -->|"POST https://script.google.com/.../exec<br/>(Body JSON + Token Personal)"| WebApp
-    PDFGen -->|"Descarga local PDF"| ManualWA["Envío manual por WhatsApp"]
+    SheetsClient -->|"POST text/plain<br/>Body: { token, action, payload }"| WebApp
+    PDFGen -->|"Descarga local PDF A4"| LocalFile["Archivo en dispositivo del usuario"]
 ```
 
 ---
@@ -33,40 +38,49 @@ flowchart TD
 
 ### A. Frontend 100% Estático (SPA)
 - **Tecnologías**: React 18, TypeScript 5, Vite 5, Tailwind CSS.
-- **Compilación**: `npm run build` genera archivos HTML, JS y CSS puros dentro de la carpeta `dist/`.
-- **Despliegue**: Puede alojarse en cualquier CDN estático (GitHub Pages, Cloudflare Pages, Netlify, Vercel) o incluso abrirse localmente.
-- **Sin SEO / Sin SSR**: Al ser una herramienta privada de uso personal, no se añade la complejidad de Server-Side Rendering ni frameworks de servidor como Next.js.
+- **Compilación**: `npm run build` genera archivos HTML, JS y CSS puros dentro del directorio `dist/`.
+- **Alojamiento**: Puede servirse desde cualquier proveedor estático (GitHub Pages, Cloudflare Pages, Netlify, Vercel) o ejecutarse localmente.
+- **Sin SSR ni Servidor Node**: Al tratarse de una herramienta personal de productividad, no se agrega la sobrecarga de Server-Side Rendering ni frameworks de servidor como Next.js.
+- **Carga Diferida de Módulos (Code Splitting)**:
+  - La suite de generación de PDF (`pdf-lib`) se carga dinámicamente mediante `dynamic import()` únicamente cuando el usuario solicita la emisión del comprobante, manteniendo el bundle principal liviano (~75 kB gzipped).
+  - La muestra visual del sistema de diseño (`UiGallery`) se separa en un chunk independiente accesible solo mediante el parámetro `?ui=1`.
 
-### B. Persistencia Privada mediante Google Apps Script Web App
-- Se optó por una Web App de Google Apps Script vinculada a la hoja de cálculo por las siguientes ventajas determinantes:
-  1. **Cero servidores propios**: No hay necesidad de mantener procesos Node.js en Railway/Render/VPS.
-  2. **Hoja 100% privada**: La hoja de cálculo **nunca se comparte públicamente**. Solo el script del propietario tiene acceso a leer y modificar los datos.
-  3. **Cero exposición de credenciales privadas**: En el navegador del usuario **nunca** se almacenan llaves privadas de Google Cloud Console ni secretos de cuentas de servicio. Solo se utiliza un token de aplicación personal.
-  4. **Autoridad de cálculo**: La lógica crítica (validación de sobrepagos, cálculo de saldos y consistencia) se ejecuta del lado de Google antes de escribir en las filas.
+### B. Persistencia y Gestión de Estado Dual
+- La capa de datos en el cliente está centralizada en [`src/services/api.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/api.ts), la cual expone dos modos operativos:
+  1. **Modo Producción (`sheets-api.ts`)**: Envía peticiones HTTP `POST` a la Web App de Google Apps Script vinculada a la hoja privada del propietario.
+  2. **Modo de Prueba / Desarrollo (`mock-adapter.ts`)**: Adaptador completamente funcional en memoria que implementa el 100% del contrato de API y de cálculos de negocio, activado automáticamente si las variables de entorno no están configuradas o si la Web App no está disponible.
 
 ---
 
-## 3. Seguridad y Acceso Personal
+## 3. Seguridad, Autenticación y Límites de Acceso
 
-Dado que la aplicación es para un **único usuario propietario**:
-- La Web App de Apps Script se despliega como "Ejecutar como: Yo" y "Acceso: Cualquier usuario".
-- La seguridad se implementa a nivel de código en el manejador `doPost`:
-  - Se valida el campo `token` recibido contra la propiedad `AUTH_TOKEN` almacenada en las *Script Properties* de Google Apps Script.
-  - Peticiones con tokens ausentes o incorrectos reciben el error JSON `UNAUTHORIZED`.
-  - La URL del Web App y el `AUTH_TOKEN` se configuran en el `.env` del frontend (`VITE_APPS_SCRIPT_URL` y `VITE_APP_AUTH_TOKEN`).
+### Comparativa: Enfoque Conceptual vs Enfoque Implementado
 
-  > **Limitación de seguridad documentada:** cualquier valor `VITE_*` se incorpora al bundle estático y puede extraerse desde el navegador. El token de aplicación no es un secreto robusto ni autentica una identidad; CORS no lo sustituye. Esta arquitectura se conserva para el uso personal aprobado, no debe confundirse con protección para datos expuestos públicamente. Si se requiere protección frente a terceros, hay que revisar la arquitectura para autenticar en un servidor antes de publicar datos personales. No almacenar credenciales privadas de Google en el frontend.
+| Criterio | Decisión Conceptual Inicial | Arquitectura Real Implementada |
+| :--- | :--- | :--- |
+| **Mecanismo de Acceso** | Autorización de Google desde el navegador (OAuth 2.0 / GIS). | Web App de Google Apps Script con token de acceso personal. |
+| **Ejecución de Persistencia** | El navegador interactúa con la API de Google Sheets usando token OAuth del usuario. | La Web App de Apps Script se ejecuta con los permisos del propietario ("Ejecutar como: Yo"). |
+| **Gestión de Credenciales** | Requiere configurar OAuth Client ID en Google Cloud Console y consent screen. | Solo requiere configurar `AUTH_TOKEN` en las *Script Properties* de Google Apps Script. |
+| **Ventajas Técnicas** | Autenticación formal con identidad de Google. | Menor fricción, cero configuración en Google Cloud Console, lógica de validación centralizada en Apps Script antes de escribir en Sheets. |
 
-  Apps Script `ContentService` no permite asignar un estado HTTP personalizado a las respuestas; los errores se interpretan mediante `success` y `error.code` del sobre JSON.
+### Limitación de Seguridad Documentada
+
+> [!WARNING]
+> **Naturaleza del Token en Bundles Estáticos**:
+> Cualquier variable con prefijo `VITE_*` (`VITE_APPS_SCRIPT_URL`, `VITE_APP_AUTH_TOKEN`) se compila directamente en el código JavaScript de la SPA. Por tanto, el token de aplicación es visible para quien inspeccione el bundle en el navegador.
+> 
+> Este mecanismo funciona como un control de acceso para **uso personal privado**, pero **no constituye un secreto criptográfico robusto ni autenticación multiusuario**. Si en el futuro la aplicación requiriera ser compartida con terceros o expuesta públicamente, será indispensable introducir un backend intermedio con autenticación de identidad.
 
 ---
 
 ## 4. Concurrencia, Rendimiento y Límites de Google Sheets
 
-| Límite / Desafío | Magnitud Real de Sheets | Estrategia de Mitigación en la Arquitectura |
+| Factor / Desafío | Magnitud Real | Estrategia de Mitigación Implementada |
 | :--- | :--- | :--- |
-| **Cuota de peticiones** | 300 peticiones / minuto por proyecto | Para un único usuario independiente, el consumo típico no superará 10 a 20 peticiones por minuto. |
-| **Condiciones de Carrera (Race conditions)** | Múltiples escrituras simultáneas pueden sobrescribir filas | `LockService.getScriptLock()` en `Code.gs`. Adquiere un bloqueo exclusivo de hasta 10 segundos antes de modificar la hoja. |
-| **Latencia de escritura** | 300 ms a 1.200 ms por llamada a Apps Script | La UI debe implementar estados de carga visibles (*loaders*, botones deshabilitados) y retroalimentación inmediata al usuario. |
-| **Identificadores estables** | Reordenar o filtrar filas en Sheets corrompe IDs basados en fila | Cada entidad genera un identificador UUID con prefijo (`cli_...`, `act_...`, `pay_...`) en la columna 1. El número de fila nunca se usa como clave foránea. |
-| **Generación de PDF** | Procesar binarios pesados en Apps Script consume memoria y cuota | La generación del documento se realiza **100% en el navegador del cliente** con los datos estructurados devueltos por la API. |
+| **Cuota de peticiones** | 300 peticiones / minuto por proyecto | El uso de un único trabajador independiente genera un tráfico típico inferior a 20 peticiones por minuto. |
+| **Condiciones de Carrera (Race conditions)** | Múltiples escrituras simultáneas en Sheets | `LockService.getScriptLock()` en `Code.gs` adquiere un bloqueo exclusivo de hasta 10 segundos antes de modificar filas. |
+| **Idempotencia y Reintentos** | Pérdida de conexión o timeouts durante escrituras | Operaciones `createClient`, `createActivity` y `addPayment` generan un `request_id` único con huella criptográfica persistido en la misma fila. Reintentos con idéntico contenido devuelven el registro original sin duplicar. |
+| **Latencia de escritura** | 400 ms a 1.500 ms por invocación a Apps Script | La interfaz implementa retroalimentación inmediata, botones deshabilitados y estados de carga visibles para prevenir dobles envíos. |
+| **Identificadores estables** | Reordenamiento o filtrado de filas en la hoja | Toda entidad genera claves primarias con prefijo semántico + UUID (`cli_...`, `act_...`, `cat_...`, `pay_...`). Jamás se depende de la posición física de la fila. |
+| **Restricciones de ContentService** | Apps Script no permite asignar códigos de estado HTTP (4xx / 5xx) | Todos los errores y éxitos se transmiten en un sobre JSON estructurado (`success: boolean`, `data`, `error: { code, message }`). El cliente interpreta dicho sobre. |
+| **Generación de PDF** | Alto consumo de memoria y cuota si se procesara en Apps Script | La generación del documento se realiza **100% en el cliente** mediante `pdf-lib`. |

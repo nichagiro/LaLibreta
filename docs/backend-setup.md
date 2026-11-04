@@ -1,51 +1,82 @@
-# Preparación y despliegue del backend
+# Preparación y Despliegue del Backend (Google Apps Script)
 
-## Arquitectura y seguridad
+## 1. Arquitectura de Persistencia y Seguridad
 
-La aplicación continúa siendo una SPA estática. La API se ejecuta en Google Apps Script vinculado a una hoja privada y se despliega como Web App ejecutada como propietario. No se requiere ni se añade un servidor Node en producción.
+La aplicación es una SPA estática que utiliza **Google Apps Script** como puente de persistencia hacia un Google Spreadsheet privado:
 
-El acceso se valida en cada `POST` comparando el token con `Script Properties.AUTH_TOKEN`. **El token `VITE_APP_AUTH_TOKEN` se publica en el bundle de la SPA** y puede extraerse desde el navegador o los archivos estáticos. No es una clave privada ni una autenticación robusta; CORS tampoco autentica. El diseño mantiene esta decisión personal existente, así que debe usarse solo en un despliegue privado y no compartido. Si se requiere protección frente a terceros, hay que revisar la arquitectura para introducir identidad autenticada en servidor antes de publicar datos personales. No almacenar credenciales de servicio o claves privadas en `VITE_*`.
+- **Sin servidores propios**: Se aloja y ejecuta enteramente en la infraestructura serverless de Google.
+- **Acceso por Token Personal**: Cada petición `POST` se autentica comparando el campo `token` recibido en el cuerpo JSON con la propiedad `AUTH_TOKEN` configurada en las *Script Properties* de Apps Script.
+- **Diferencia con el planteamiento inicial de OAuth**: No se implementó autorización OAuth/GIS desde el navegador debido a la complejidad de gestión de pantallas de consentimiento en Google Cloud Console para uso individual. La Web App se ejecuta con la identidad del propietario ("Ejecutar como: Yo") y acceso "Cualquier usuario" para recibir los POST de la SPA.
 
-La hoja no debe publicarse ni compartirse con el público. El script debe ejecutarse con la cuenta propietaria y recibir solo el permiso de Google Sheets que solicite Apps Script para operar en la hoja vinculada. No otorgues permisos de edición a usuarios no autorizados.
+> [!WARNING]
+> **Límite de Seguridad del Token en el Frontend**:
+> El valor `VITE_APP_AUTH_TOKEN` se compila directamente en los archivos estáticos de la SPA. Cualquiera que acceda al bundle puede extraer el token. Este modelo está diseñado y aceptado exclusivamente para **uso personal y privado**. No debe usarse para aplicaciones compartidas con múltiples usuarios o expuestas al público.
 
-## Preparar el Spreadsheet
+---
 
-1. Crea una hoja de cálculo exclusiva para desarrollo/pruebas manuales y mantenla privada. No se requiere crear pestañas manualmente: el script crea las pestañas canónicas al utilizarlas por primera vez.
-2. Desde la hoja, abre **Extensiones → Apps Script** y copia el contenido de `apps-script/Code.gs`.
-3. En **Configuración del proyecto → Propiedades de la secuencia de comandos**, agrega `AUTH_TOKEN` con un valor aleatorio largo. No lo compartas ni lo pongas en archivos versionados.
-4. Ejecuta el despliegue como **Aplicación web**, **Ejecutar como: yo**. La política de acceso debe permitir las llamadas de la SPA y depende de las opciones que Google muestre para la cuenta; no publiques la hoja.
-5. Autoriza los permisos solicitados, confirma que el propietario es la cuenta esperada y copia la URL `/exec`.
-6. Copia `.env.example` a `.env` local y configura `VITE_APPS_SCRIPT_URL` y `VITE_APP_AUTH_TOKEN`. No envíes el `.env` ni incluyas tokens reales en capturas, logs o commits. Todo `VITE_*` queda expuesto al navegador.
-7. Usa `ping` desde la SPA para comprobar el endpoint. Para pruebas con datos, utiliza solamente una hoja de desarrollo autorizada.
+## 2. Estado Actual de la Integración
 
-## Cambios de esquema existentes
+| Componente | Estado Actual | Verificación Realizada |
+| :--- | :---: | :--- |
+| **Código Apps Script (`Code.gs`)** | ✅ Completo | Implementa las 15 acciones de la API, bloqueo con `LockService` y deduplicación. |
+| **Pruebas Automatizadas Backend** | ✅ Aprobado | 12/12 pruebas unitarias aprobadas con dobles locales de Apps Script (`npm run test:backend`). |
+| **Despliegue Real en Google** | ⏳ Pendiente | Requiere que el propietario cree la hoja privada, copie el código y genere la URL `/exec`. |
+| **Pruebas contra Google Real** | ⏳ Pendiente | No se ejecutaron escrituras contra endpoints de Google para proteger datos y privacidad. |
 
-Se conservan las cinco pestañas existentes (`Clientes`, `Categorias`, `Actividades`, `Pagos`, `Configuracion`). Al ejecutar una acción, el script comprueba las cabeceras y agrega las columnas faltantes al final, sin modificar ni borrar filas. En `Clientes`, `Actividades` y `Pagos` se agregan `request_id`, `request_action` y `request_fingerprint` para idempotencia. Una cabecera no coincidente produce `SCHEMA_MISMATCH`; corrige el esquema manualmente después de hacer una copia de seguridad, no renombres ni elimines columnas con datos.
+---
 
-No se ejecutó una migración ni se modificó ninguna hoja Google durante esta implementación.
+## 3. Guía Paso a Paso para el Despliegue en Google
 
-## Reintentos y garantías
+### Paso 1: Crear la Hoja de Cálculo Privada
+1. En Google Drive, crea una nueva hoja de cálculo llamada `Control de Ingresos`.
+2. Mantenla **100% privada** (no compartir mediante enlace público). No es necesario crear pestañas: el script las creará automáticamente en su primera ejecución.
 
-Para `createClient`, `createActivity` y `addPayment`, genera un `request_id` aleatorio y persistente por operación lógica y reutiliza exactamente el mismo ID y payload si la respuesta se pierde o queda incierta. No generes uno nuevo al reintentar. El backend guarda ID y huella del payload en la fila de la entidad bajo `LockService`; reutilizar el ID con otro contenido da `IDEMPOTENCY_CONFLICT`.
+### Paso 2: Abrir el Editor de Apps Script
+1. En la hoja de cálculo, abre el menú superior **Extensiones → Apps Script**.
+2. Borra el código de ejemplo y copia íntegramente el contenido del archivo [`apps-script/Code.gs`](file:///C:/Users/djcha/Documents/Code/Ingresos/apps-script/Code.gs).
 
-`LockService` serializa la ejecución del script, pero Google Sheets no ofrece transacciones. No se garantiza rollback ni exactly-once ante todos los fallos externos. Ante un resultado incierto, consulta los registros y/o reintenta con la misma clave. El contrato de `ContentService` devuelve los errores en el sobre JSON y no permite asignar códigos HTTP de error a la respuesta.
+### Paso 3: Configurar el Token Secreto
+1. En el menú lateral izquierdo de Apps Script, haz clic en ⚙️ **Configuración del proyecto**.
+2. En la sección **Propiedades de la secuencia de comandos**, haz clic en **Agregar propiedad de la secuencia de comandos**:
+   - **Propiedad**: `AUTH_TOKEN`
+   - **Valor**: Un token aleatorio y seguro (ejemplo: cadena aleatoria de más de 20 caracteres).
+3. Guarda los cambios.
 
-## Pruebas y comandos
+### Paso 4: Implementar como Aplicación Web (Web App)
+1. En la esquina superior derecha, haz clic en **Implementar → Nueva implementación**.
+2. Selecciona el tipo ⚙️ **Aplicación web**.
+3. Configuración obligatoria:
+   - **Descripción**: `API v1 Control de Ingresos`
+   - **Ejecutar como**: `Yo (tu_cuenta@gmail.com)` *(garantiza que el script acceda a tu hoja privada)*.
+   - **Quién tiene acceso**: `Cualquier usuario` *(permite que la SPA envíe peticiones POST autenticadas por el token)*.
+4. Haz clic en **Implementar** y autoriza los permisos solicitados en la ventana emergente de Google.
+5. Copia la **URL de la aplicación web** generada (termina en `/exec`).
 
-Las pruebas automatizadas simulan Apps Script y Google Sheets, sin enviar peticiones a Google:
+### Paso 5: Configurar el Entorno Local
+1. En la raíz del proyecto local, crea un archivo `.env` a partir de `.env.example`:
+   ```env
+   VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/TU_SCRIPT_ID/exec
+   VITE_APP_AUTH_TOKEN=el_mismo_token_que_configuraste_en_apps_script
+   VITE_APP_TITLE="Control de Ingresos"
+   VITE_DEFAULT_CURRENCY=COP
+   VITE_TIMEZONE=America/Bogota
+   ```
+2. Inicia la aplicación con `npm run dev`.
+3. Ve a **Configuración → Persistencia y Conectividad** y pulsa **Probar Conexión con Apps Script (Ping)** para validar la comunicación.
 
-```bash
-npm run test:backend
-npm run typecheck
-npm run lint
-npm run build
-```
+---
 
-Las pruebas reales contra Google no se ejecutaron: no se proporcionaron credenciales, despliegue ni hoja de desarrollo autorizada. No se deben probar contra hojas con datos personales.
+## 4. Manejo de Reintentos e Idempotencia
 
-## Límites
+Las operaciones de creación (`createClient`, `createActivity` y `addPayment`) requieren un `request_id` generado por el cliente:
+- El script guarda dicho `request_id`, la acción y una huella SHA-256 del payload en la fila persistida.
+- Si una petición de red se interrumpe y la SPA reintenta con el mismo `request_id` y mismo payload, Apps Script devuelve el registro ya creado sin duplicarlo.
+- Si se envía el mismo `request_id` con datos diferentes, la API responde con error `IDEMPOTENCY_CONFLICT`.
 
-- Token en cliente estático expuesto a cualquiera que obtenga el bundle.
-- Sin transacciones de base de datos, rollback garantizado ni códigos HTTP personalizados en `ContentService`.
-- La aplicación debe tratar `success` y `error.code` del JSON como resultado autoritativo.
-- No crear recursos Google, desplegar Apps Script ni modificar datos reales sin autorización explícita.
+---
+
+## 5. Reglas de Seguridad en Tareas de Mantenimiento
+
+- **Nunca** ejecutes pruebas automatizadas de escritura contra la hoja real del usuario.
+- **Nunca** expongas tokens ni URLs de producción en el repositorio público ni en `.env.example`.
+- Si necesitas probar cambios de lógica en `Code.gs`, hazlo con los tests de dobles en `apps-script/tests/backend.test.cjs` o sobre una hoja de prueba aislada.
