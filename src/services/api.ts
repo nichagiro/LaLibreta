@@ -2,8 +2,9 @@
  * Servicio Centralizado de API e Integración
  *
  * Conecta el frontend con la persistencia en Google Sheets mediante Apps Script,
- * o conmuta transparentemente al Mock Adapter en memoria si el endpoint
- * remoto aún no está disponible o accesible.
+ * o con el Mock Adapter en memoria según la variable de entorno `VITE_DATA_SOURCE`
+ * (`sheets` | `mock`). El modo se define en compilación: no hay detección ni
+ * conmutación en tiempo de ejecución.
  */
 
 import { sheetsApi } from '@/services/sheets-api';
@@ -25,47 +26,26 @@ import type {
   PaymentMethod,
 } from '@/types';
 
+/**
+ * Lee `VITE_DATA_SOURCE` preservando el acceso textual que Vite reemplaza en
+ * compilación. Fuera de Vite (por ejemplo, pruebas en Node) `import.meta.env`
+ * no existe y se asume el modo "sheets" (estricto), igual que con un valor
+ * no reconocido u omitido.
+ */
+function readDataSource(): 'sheets' | 'mock' {
+  try {
+    return import.meta.env.VITE_DATA_SOURCE === 'mock' ? 'mock' : 'sheets';
+  } catch {
+    return 'sheets';
+  }
+}
+
 class ApiService {
-  private useMock: boolean = true;
-  private connectionChecked: boolean = false;
-  private connectionError: string | null = null;
-  private listeners: Set<(mock: boolean) => void> = new Set();
+  private useMock: boolean = readDataSource() === 'mock';
 
-  constructor() {
-    // Si no hay configuración de entorno, inicia directamente en modo mock
-    if (!sheetsApi.isConfigured()) {
-      this.useMock = true;
-      this.connectionChecked = true;
-      this.connectionError = 'Variables de entorno no configuradas.';
-    }
-  }
-
-  public subscribeModeChange(listener: (mock: boolean) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private notifyModeChange(): void {
-    for (const listener of this.listeners) {
-      listener(this.useMock);
-    }
-  }
-
+  /** Modo fijo en compilación según `VITE_DATA_SOURCE`. */
   public isMockMode(): boolean {
     return this.useMock;
-  }
-
-  public isConnectionChecked(): boolean {
-    return this.connectionChecked;
-  }
-
-  public setMockMode(enabled: boolean): void {
-    this.useMock = enabled;
-    this.notifyModeChange();
-  }
-
-  public getConnectionError(): string | null {
-    return this.connectionError;
   }
 
   /**
@@ -79,32 +59,33 @@ class ApiService {
   }
 
   /**
-   * Comprueba si el backend real de Google Apps Script responde.
+   * Claves de idempotencia pendientes por operación lógica.
+   * Mientras una creación no termina, un reintento con los mismos datos
+   * reutiliza el mismo `request_id`: el backend devuelve el registro ya
+   * persistido en lugar de duplicarlo.
    */
-  public async checkBackendHealth(): Promise<{ success: boolean; message: string; version?: string }> {
-    if (!sheetsApi.isConfigured()) {
-      this.useMock = true;
-      this.connectionChecked = true;
-      this.connectionError = 'Configuración pendiente: VITE_APPS_SCRIPT_URL y VITE_APP_AUTH_TOKEN no definidas.';
-      this.notifyModeChange();
-      return { success: false, message: this.connectionError };
-    }
+  private pendingRequestIds: Map<string, string> = new Map();
 
-    try {
-      const res = await sheetsApi.execute<{ message: string; version: string }>('ping');
-      this.useMock = false;
-      this.connectionChecked = true;
-      this.connectionError = null;
-      this.notifyModeChange();
-      return { success: true, message: res.message, version: res.version };
-    } catch (err: unknown) {
-      this.useMock = true;
-      this.connectionChecked = true;
-      const errorMsg = (err as Error)?.message || 'No fue posible conectar con Google Apps Script.';
-      this.connectionError = errorMsg;
-      this.notifyModeChange();
-      return { success: false, message: errorMsg };
+  private requestKey(prefix: string, data: object): string {
+    return `${prefix}:${JSON.stringify(data)}`;
+  }
+
+  private requestIdFor(prefix: string, data: object): string {
+    const key = this.requestKey(prefix, data);
+    const pending = this.pendingRequestIds.get(key);
+    if (pending) return pending;
+
+    const generated = this.generateRequestId(prefix);
+    this.pendingRequestIds.set(key, generated);
+    if (this.pendingRequestIds.size > 50) {
+      const oldest = this.pendingRequestIds.keys().next();
+      if (!oldest.done) this.pendingRequestIds.delete(oldest.value);
     }
+    return generated;
+  }
+
+  private releaseRequestId(prefix: string, data: object): void {
+    this.pendingRequestIds.delete(this.requestKey(prefix, data));
   }
 
   // ==========================================
@@ -134,10 +115,13 @@ class ApiService {
   }): Promise<Client> {
     const payload = {
       ...data,
-      request_id: this.generateRequestId('client'),
+      request_id: this.requestIdFor('client', data),
     };
-    if (this.useMock) return mockAdapter.createClient(payload);
-    return sheetsApi.execute<Client, typeof payload>('createClient', payload);
+    const created = this.useMock
+      ? await mockAdapter.createClient(payload)
+      : await sheetsApi.execute<Client, typeof payload>('createClient', payload);
+    this.releaseRequestId('client', data);
+    return created;
   }
 
   public async updateClient(data: {
@@ -199,10 +183,13 @@ class ApiService {
   }): Promise<Activity> {
     const payload = {
       ...data,
-      request_id: this.generateRequestId('act'),
+      request_id: this.requestIdFor('act', data),
     };
-    if (this.useMock) return mockAdapter.createActivity(payload);
-    return sheetsApi.execute<Activity, typeof payload>('createActivity', payload);
+    const created = this.useMock
+      ? await mockAdapter.createActivity(payload)
+      : await sheetsApi.execute<Activity, typeof payload>('createActivity', payload);
+    this.releaseRequestId('act', data);
+    return created;
   }
 
   public async updateActivity(data: {
@@ -241,10 +228,13 @@ class ApiService {
   }): Promise<Payment> {
     const payload = {
       ...data,
-      request_id: this.generateRequestId('pay'),
+      request_id: this.requestIdFor('pay', data),
     };
-    if (this.useMock) return mockAdapter.addPayment(payload);
-    return sheetsApi.execute<Payment, typeof payload>('addPayment', payload);
+    const created = this.useMock
+      ? await mockAdapter.addPayment(payload)
+      : await sheetsApi.execute<Payment, typeof payload>('addPayment', payload);
+    this.releaseRequestId('pay', data);
+    return created;
   }
 
   public async deletePayment(id: PaymentId): Promise<{ id: PaymentId; deleted: boolean }> {

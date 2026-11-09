@@ -18,7 +18,7 @@ La aplicación es una SPA estática que utiliza **Google Apps Script** como puen
 
 | Componente | Estado Actual | Verificación Realizada |
 | :--- | :---: | :--- |
-| **Código Apps Script (`Code.gs`)** | ✅ Completo | Implementa las 15 acciones de la API, bloqueo con `LockService` y deduplicación. |
+| **Código Apps Script (`Code.gs`)** | ✅ Completo | Implementa las 20 acciones de la API, bloqueo con `LockService` y deduplicación. |
 | **Pruebas Automatizadas Backend** | ✅ Aprobado | 12/12 pruebas unitarias aprobadas con dobles locales de Apps Script (`npm run test:backend`). |
 | **Despliegue Real en Google** | ⏳ Pendiente | Requiere que el propietario cree la hoja privada, copie el código y genere la URL `/exec`. |
 | **Pruebas contra Google Real** | ⏳ Pendiente | No se ejecutaron escrituras contra endpoints de Google para proteger datos y privacidad. |
@@ -55,14 +55,14 @@ La aplicación es una SPA estática que utiliza **Google Apps Script** como puen
 ### Paso 5: Configurar el Entorno Local
 1. En la raíz del proyecto local, crea un archivo `.env` a partir de `.env.example`:
    ```env
+   VITE_DATA_SOURCE=sheets
    VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/TU_SCRIPT_ID/exec
    VITE_APP_AUTH_TOKEN=el_mismo_token_que_configuraste_en_apps_script
    VITE_APP_TITLE="Control de Ingresos"
    VITE_DEFAULT_CURRENCY=COP
    VITE_TIMEZONE=America/Bogota
    ```
-2. Inicia la aplicación con `npm run dev`.
-3. Ve a **Configuración → Persistencia y Conectividad** y pulsa **Probar Conexión con Apps Script (Ping)** para validar la comunicación.
+2. Inicia la aplicación con `npm run dev` y opera normalmente: si la Web App no responde, las operaciones fallarán visiblemente (no hay conmutación automática al modo de prueba). Para desarrollo sin conexión a Google, asigna `VITE_DATA_SOURCE=mock`.
 
 ---
 
@@ -72,6 +72,12 @@ Las operaciones de creación (`createClient`, `createActivity` y `addPayment`) r
 - El script guarda dicho `request_id`, la acción y una huella SHA-256 del payload en la fila persistida.
 - Si una petición de red se interrumpe y la SPA reintenta con el mismo `request_id` y mismo payload, Apps Script devuelve el registro ya creado sin duplicarlo.
 - Si se envía el mismo `request_id` con datos diferentes, la API responde con error `IDEMPOTENCY_CONFLICT`.
+
+La cadena de protección se completa en el cliente:
+
+1. **Reintento de transporte** (`src/services/sheets-api.ts`): si `fetch` falla o el endpoint devuelve un estado no-2xx, la petición se reenvía una sola vez tras 250 ms. Solo se reenvía cuando la acción es segura para repetir (lecturas puras y las tres escrituras con `request_id`) y **siempre con el mismo cuerpo**, de modo que la huella de idempotencia no cambia.
+2. **Reintento del usuario** (`src/services/api.ts`): si una creación termina en error, su `request_id` se conserva asociado a esa misma carga útil. Si el usuario vuelve a intentar la operación con los datos idénticos, se reutiliza la misma clave y el backend devuelve el registro existente.
+3. Los errores de la aplicación (`success: false`, por ejemplo `VALIDATION_ERROR` u `OVERPAYMENT_NOT_ALLOWED`) **nunca** se reintentan automáticamente: son respuestas definitivas del servidor.
 
 ---
 

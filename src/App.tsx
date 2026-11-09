@@ -12,6 +12,8 @@ import { ActivitiesView } from '@/features/activities/ActivitiesView';
 import { ClientsView } from '@/features/clients/ClientsView';
 import { SettingsView } from '@/features/settings/SettingsView';
 import { api } from '@/services/api';
+import { sheetsApi } from '@/services/sheets-api';
+import { navigateTo, useAppRoute, type AppRoute } from '@/router';
 
 // Muestra visual del sistema de diseño (Sesión 2). Se carga solo cuando la URL
 // trae `?ui=1`, así el bundle de la aplicación no se lleva la galería.
@@ -23,18 +25,18 @@ const galleryRequested = () =>
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('ui');
 
 export const App: React.FC = () => {
-  const [activeView, setActiveView] = useState<'dashboard' | 'activities' | 'clients' | 'settings'>('dashboard');
-  const [isMockMode, setIsMockMode] = useState<boolean>(api.isMockMode());
+  const activeRoute = useAppRoute();
+  // El modo es fijo: lo decide VITE_DATA_SOURCE en tiempo de compilación.
+  const isMockMode = api.isMockMode();
+  const sheetsConfigured = sheetsApi.isConfigured();
   const [selectedClientIdForNewActivity, setSelectedClientIdForNewActivity] = useState<string | null>(null);
 
   useEffect(() => {
-    // Comprobar salud del backend en arranque si no fue verificado
-    api.checkBackendHealth().then(() => {
-      setIsMockMode(api.isMockMode());
-    });
-    const unsubscribe = api.subscribeModeChange((mock) => setIsMockMode(mock));
-    return () => unsubscribe();
-  }, []);
+    // Al salir de Actividades (incluido Atrás/Adelante) se descarta el cliente preseleccionado.
+    if (activeRoute !== 'activities') {
+      setSelectedClientIdForNewActivity(null);
+    }
+  }, [activeRoute]);
 
   if (galleryRequested()) {
     return (
@@ -76,9 +78,9 @@ export const App: React.FC = () => {
   return (
     <AppShell
       items={navItems}
-      activeKey={activeView}
+      activeKey={activeRoute}
       onNavigate={(key) => {
-        setActiveView(key as typeof activeView);
+        navigateTo(key as AppRoute);
         if (key !== 'activities') {
           setSelectedClientIdForNewActivity(null);
         }
@@ -111,7 +113,7 @@ export const App: React.FC = () => {
       }
     >
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Banner de Modo de Prueba si no hay persistencia real en Google Sheets */}
+        {/* Banner de Modo de Prueba si VITE_DATA_SOURCE=mock */}
         {isMockMode ? (
           <div
             role="status"
@@ -121,13 +123,14 @@ export const App: React.FC = () => {
               <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
               <span>
                 <strong>Modo de prueba (Adaptador en memoria):</strong> Los datos se gestionan
-                localmente durante la sesión. Para conectar con Google Sheets, despliega el Web App
-                según la guía.
+                localmente durante la sesión. Para usar Google Sheets, asigna{' '}
+                <code className="font-mono">VITE_DATA_SOURCE=sheets</code> y reconstruye la
+                aplicación.
               </span>
             </div>
             <button
               type="button"
-              onClick={() => setActiveView('settings')}
+              onClick={() => navigateTo('settings')}
               className="font-semibold underline underline-offset-2 hover:text-amber-950 text-left sm:text-right shrink-0"
             >
               Ver configuración →
@@ -135,34 +138,49 @@ export const App: React.FC = () => {
           </div>
         ) : null}
 
+        {/* Aviso estático cuando el modo es Sheets pero falta configuración */}
+        {!isMockMode && !sheetsConfigured ? (
+          <div
+            role="alert"
+            className="p-3 bg-red-50 border border-red-300 rounded-lg text-xs text-red-900"
+          >
+            <strong>Configuración de Sheets incompleta:</strong> el modo{' '}
+            <code className="font-mono">VITE_DATA_SOURCE=sheets</code> está activo, pero faltan{' '}
+            <code className="font-mono">VITE_APPS_SCRIPT_URL</code> y/o{' '}
+            <code className="font-mono">VITE_APP_AUTH_TOKEN</code> en el archivo{' '}
+            <code className="font-mono">.env</code>. No hay datos de respaldo ni conmutación
+            automática: las operaciones fallarán hasta completar la configuración.
+          </div>
+        ) : null}
+
         {/* Vistas Principales */}
-        {activeView === 'dashboard' ? (
+        {activeRoute === 'dashboard' ? (
           <DashboardView
-            onNavigateToActivities={() => setActiveView('activities')}
-            onNavigateToClients={() => setActiveView('clients')}
+            onNavigateToActivities={() => navigateTo('activities')}
+            onNavigateToClients={() => navigateTo('clients')}
           />
         ) : null}
 
-        {activeView === 'activities' ? (
+        {activeRoute === 'activities' ? (
           <ActivitiesView
             initialClientId={selectedClientIdForNewActivity}
             onClearInitialClient={() => setSelectedClientIdForNewActivity(null)}
           />
         ) : null}
 
-        {activeView === 'clients' ? (
+        {activeRoute === 'clients' ? (
           <ClientsView
             onCreateActivityWithClient={(clientId) => {
               setSelectedClientIdForNewActivity(clientId);
-              setActiveView('activities');
+              navigateTo('activities');
             }}
             onSelectActivity={(_activityId) => {
-              setActiveView('activities');
+              navigateTo('activities');
             }}
           />
         ) : null}
 
-        {activeView === 'settings' ? <SettingsView /> : null}
+        {activeRoute === 'settings' ? <SettingsView /> : null}
       </div>
     </AppShell>
   );

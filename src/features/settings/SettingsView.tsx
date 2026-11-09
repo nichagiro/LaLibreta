@@ -34,10 +34,9 @@ export function SettingsView() {
   const [catToToggle, setCatToToggle] = useState<Category | null>(null);
   const [togglingCat, setTogglingCat] = useState(false);
 
-  // Conectividad Backend
-  const [isMock, setIsMock] = useState(api.isMockMode());
-  const [testingPing, setTestingPing] = useState(false);
-  const [pingResult, setPingResult] = useState<{ success: boolean; message: string } | null>(null);
+  // Conectividad Backend (modo fijo según VITE_DATA_SOURCE, sin detección en runtime)
+  const isMock = api.isMockMode();
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const loadSettings = async () => {
     try {
@@ -51,8 +50,6 @@ export function SettingsView() {
 
   useEffect(() => {
     loadSettings();
-    const unsubscribe = api.subscribeModeChange((mock) => setIsMock(mock));
-    return () => unsubscribe();
   }, []);
 
   const handleSaveConfig = async (e: FormEvent) => {
@@ -94,22 +91,10 @@ export function SettingsView() {
     }
   };
 
-  const handleTestConnection = async () => {
-    setTestingPing(true);
-    setPingResult(null);
-    const result = await api.checkBackendHealth();
-    setTestingPing(false);
-    setPingResult(result);
-    setIsMock(api.isMockMode());
-  };
-
   const handleResetDemoData = () => {
     api.resetMockData();
     loadSettings();
-    setPingResult({
-      success: true,
-      message: 'Datos en memoria reiniciados a los valores de muestra originales.',
-    });
+    setResetMessage('Datos en memoria reiniciados a los valores de muestra originales.');
   };
 
   const tabsItems = [
@@ -315,20 +300,11 @@ export function SettingsView() {
 
               <p className="text-xs text-surface-600 leading-relaxed">
                 {isMock
-                  ? 'Actualmente estás usando el Adaptador en Memoria con los datos de muestra de «La Libreta». Los cambios se mantienen mientras no recargues la página y no se persisten en Google Sheets.'
-                  : 'Conexión activa con tu Web App privada de Google Apps Script. Las escrituras se guardan directamente en las pestañas de tu Google Spreadsheet.'}
+                  ? 'Estás usando el Adaptador en Memoria con los datos de muestra de «La Libreta» porque VITE_DATA_SOURCE=mock. Los cambios se mantienen mientras no recargues la página y no se persisten en Google Sheets.'
+                  : 'Conexión directa con tu Web App privada de Google Apps Script (VITE_DATA_SOURCE=sheets). Las escrituras se guardan directamente en las pestañas de tu Google Spreadsheet y no hay conmutación a modo de prueba.'}
               </p>
 
               <div className="pt-2 flex flex-wrap items-center gap-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleTestConnection}
-                  loading={testingPing}
-                >
-                  Probar Conexión con Apps Script (Ping)
-                </Button>
-
                 {isMock ? (
                   <Button variant="ghost" size="sm" onClick={handleResetDemoData}>
                     Restablecer Datos de Muestra
@@ -336,16 +312,9 @@ export function SettingsView() {
                 ) : null}
               </div>
 
-              {pingResult ? (
-                <div
-                  className={`mt-3 p-3 rounded text-xs border ${
-                    pingResult.success
-                      ? 'bg-received-tint border-received text-received'
-                      : 'bg-amber-50 border-amber-300 text-amber-900'
-                  }`}
-                >
-                  <strong>{pingResult.success ? 'Conexión exitosa' : 'Diagnóstico de conexión'}:</strong>{' '}
-                  {pingResult.message}
+              {resetMessage ? (
+                <div className="mt-3 p-3 rounded text-xs border bg-received-tint border-received text-received">
+                  <strong>Datos reiniciados:</strong> {resetMessage}
                 </div>
               ) : null}
             </div>

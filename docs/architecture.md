@@ -46,9 +46,10 @@ flowchart TD
   - La muestra visual del sistema de diseño (`UiGallery`) se separa en un chunk independiente accesible solo mediante el parámetro `?ui=1`.
 
 ### B. Persistencia y Gestión de Estado Dual
-- La capa de datos en el cliente está centralizada en [`src/services/api.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/api.ts), la cual expone dos modos operativos:
+- La capa de datos en el cliente está centralizada en [`src/services/api.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/api.ts), la cual expone dos modos operativos fijados en compilación por la variable de entorno `VITE_DATA_SOURCE` (`sheets` | `mock`; valor omitido o desconocido equivale a `sheets`):
   1. **Modo Producción (`sheets-api.ts`)**: Envía peticiones HTTP `POST` a la Web App de Google Apps Script vinculada a la hoja privada del propietario.
-  2. **Modo de Prueba / Desarrollo (`mock-adapter.ts`)**: Adaptador completamente funcional en memoria que implementa el 100% del contrato de API y de cálculos de negocio, activado automáticamente si las variables de entorno no están configuradas o si la Web App no está disponible.
+  2. **Modo de Prueba / Desarrollo (`mock-adapter.ts`)**: Adaptador completamente funcional en memoria que implementa el 100% del contrato de API y de cálculos de negocio, activado únicamente cuando el propietario asigna explícitamente `VITE_DATA_SOURCE=mock`.
+- **No existe detección ni conmutación automática de modo en runtime**. Si el modo es `sheets` y la Web App no está accesible, las operaciones fallan visiblemente; el cliente jamás recurre al adaptador en memoria como respaldo.
 
 ---
 
@@ -79,7 +80,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | **Cuota de peticiones** | 300 peticiones / minuto por proyecto | El uso de un único trabajador independiente genera un tráfico típico inferior a 20 peticiones por minuto. |
 | **Condiciones de Carrera (Race conditions)** | Múltiples escrituras simultáneas en Sheets | `LockService.getScriptLock()` en `Code.gs` adquiere un bloqueo exclusivo de hasta 10 segundos antes de modificar filas. |
-| **Idempotencia y Reintentos** | Pérdida de conexión o timeouts durante escrituras | Operaciones `createClient`, `createActivity` y `addPayment` generan un `request_id` único con huella criptográfica persistido en la misma fila. Reintentos con idéntico contenido devuelven el registro original sin duplicar. |
+| **Idempotencia y Reintentos** | Pérdida de conexión o timeouts durante escrituras | Operaciones `createClient`, `createActivity` y `addPayment` generan un `request_id` único con huella criptográfica persistido en la misma fila. Reintentos con idéntico contenido devuelven el registro original sin duplicar. El cliente reenvía el cuerpo byte a byte tras una falla de transporte y reutiliza la misma clave si el usuario vuelve a intentar la operación; los errores de aplicación (`success: false`) no se reintentan. |
 | **Latencia de escritura** | 400 ms a 1.500 ms por invocación a Apps Script | La interfaz implementa retroalimentación inmediata, botones deshabilitados y estados de carga visibles para prevenir dobles envíos. |
 | **Identificadores estables** | Reordenamiento o filtrado de filas en la hoja | Toda entidad genera claves primarias con prefijo semántico + UUID (`cli_...`, `act_...`, `cat_...`, `pay_...`). Jamás se depende de la posición física de la fila. |
 | **Restricciones de ContentService** | Apps Script no permite asignar códigos de estado HTTP (4xx / 5xx) | Todos los errores y éxitos se transmiten en un sobre JSON estructurado (`success: boolean`, `data`, `error: { code, message }`). El cliente interpreta dicho sobre. |

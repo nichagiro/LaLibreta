@@ -55,6 +55,7 @@ cp .env.example .env
 
 El archivo [`.env.example`](file:///C:/Users/djcha/Documents/Code/Ingresos/.env.example) contiene la estructura requerida:
 ```env
+VITE_DATA_SOURCE=sheets
 VITE_APPS_SCRIPT_URL=https://script.google.com/macros/s/TU_SCRIPT_ID/exec
 VITE_APP_AUTH_TOKEN=tu_clave_de_acceso_personal_aqui
 VITE_APP_TITLE="Control de Ingresos"
@@ -63,7 +64,7 @@ VITE_TIMEZONE=America/Bogota
 ```
 
 > [!NOTE]
-> Si `.env` no existe o no tiene configuradas la URL y el token, la aplicación iniciará automáticamente en **Modo de Prueba** (utilizando datos en memoria).
+> El origen de datos lo decide únicamente `VITE_DATA_SOURCE`: `sheets` (o cualquier valor omitido/desconocido) usa la Web App de Google Apps Script real, y `mock` usa el adaptador en memoria con datos de muestra. No existe detección ni conmutación automática en runtime: si eliges `sheets` sin URL/token válidos verás errores de configuración, nunca datos de prueba. El valor se compila en el bundle; cambiarlo exige reconstruir la aplicación.
 
 ### 4. Iniciar en modo desarrollo
 ```bash

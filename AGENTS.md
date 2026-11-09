@@ -15,7 +15,7 @@ El sistema opera bajo un modelo desacoplado y sin servidor propio en producción
 2. **Capa de Persistencia Dual**:
    - Orquestada por [`src/services/api.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/api.ts).
    - **Modo Producción**: Conexión a un Google Spreadsheet privado a través de una Web App de Google Apps Script ([`apps-script/Code.gs`](file:///C:/Users/djcha/Documents/Code/Ingresos/apps-script/Code.gs)) invocada por [`src/services/sheets-api.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/sheets-api.ts).
-   - **Modo de Prueba / Desarrollo**: Si no se configuran las variables o falla la conexión remota, el cliente conmuta de forma transparente al adaptador en memoria ([`src/services/mock-adapter.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/mock-adapter.ts)).
+   - **Modo de Prueba / Desarrollo**: Si `VITE_DATA_SOURCE=mock`, el cliente usa el adaptador en memoria ([`src/services/mock-adapter.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/services/mock-adapter.ts)). Cualquier otro valor (incluida la omisión) activa el modo Sheets de forma estricta, sin conmutación automática ni respaldo en runtime.
 3. **Generación de Comprobantes PDF**:
    - Generación 100% en el cliente mediante `pdf-lib` ([`src/features/pdf/generatePdf.ts`](file:///C:/Users/djcha/Documents/Code/Ingresos/src/features/pdf/generatePdf.ts)), con carga dinámica (`dynamic import`) para no penalizar el bundle inicial.
 4. **Límites Técnicos Críticos**:
@@ -124,7 +124,7 @@ npm run typecheck
 # 2. Análisis estático de código y reglas de React (0 advertencias, 0 errores)
 npm run lint
 
-# 3. Suite completa de pruebas automatizadas (20 pruebas: 12 backend + 8 frontend)
+# 3. Suite completa de pruebas automatizadas (21 pruebas: 12 backend + 9 frontend)
 npm run test
 
 # 4. Compilación de producción (verifica build estático SPA limpio en dist/)

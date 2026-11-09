@@ -264,7 +264,7 @@ Breakpoints de Tailwind: `sm 640` · `md 768` · `lg 1024`.
 
 - **`lg` en adelante**: `SideNav` fijo de 240 px (`w-60`) a la izquierda. Destino activo con regla de acento a la izquierda **y** `aria-current="page"`.
 - **Por debajo de `lg`**: `BottomNav` fijo con `pb-[env(safe-area-inset-bottom)]`, para que el último ítem no quede bajo la barra del teléfono. Activo con regla superior y `aria-current="page"`.
-- No hay router: la navegación se pasa como `activeKey` / `onNavigate`. Quien monta el shell decide cómo cambiar de vista.
+- No hay router dentro del shell: la navegación se pasa como `activeKey` / `onNavigate`. Quien monta el shell decide cómo cambiar de vista. La aplicación monta `src/router.ts`, un ruteo por hash sin dependencias (`#/inicio`, `#/actividades`, `#/clientes`, `#/configuracion`), de modo que `AppShell` permanece agnóstico.
 
 ### 7.2 Cabecera de página (`PageHeader`)
 

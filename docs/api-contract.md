@@ -62,9 +62,25 @@ Las operaciones `createClient`, `createActivity` y `addPayment` requieren `paylo
 | `IDEMPOTENCY_CONFLICT` | `request_id` reutilizado con acción o contenido distintos. |
 | `INVALID_REQUEST` | JSON, payload o identificador de reintento inválido. |
 | `SCHEMA_MISMATCH` | Cabeceras existentes en la hoja no coinciden con el modelo canónico. |
+| `SCHEMA_MIGRATION_REQUIRED` | A la pestaña le faltan las columnas de idempotencia (`request_id`, `request_action`, `request_fingerprint`). |
 | `SHEETS_FAILURE` | Fallo interno de Apps Script/Google Sheets (la respuesta oculta detalles internos). |
+| `INTERNAL_ERROR` | Fallo inesperado del script; no expone stack trace ni detalle interno. |
 | `NETWORK_FAILURE` | Falla de conexión a internet o endpoint inalcanzable. |
 | `UNSUPPORTED_ACTION` | Acción solicitada desconocida. |
+
+### 2.1 Códigos generados por el cliente (`src/services/sheets-api.ts`)
+
+Estos códigos no viajan desde Google: los produce el adaptador del navegador antes o después de recibir la respuesta.
+
+| Código de Error | Descripción |
+| :--- | :--- |
+| `MISSING_ENDPOINT` | Falta `VITE_APPS_SCRIPT_URL`. |
+| `MISSING_AUTH_TOKEN` | Falta `VITE_APP_AUTH_TOKEN`. |
+| `HTTP_ERROR` | El endpoint devolvió un estado HTTP distinto de 2xx. |
+| `REMOTE_ERROR` | Sobre JSON sin objeto `error`. |
+| `NETWORK_FAILURE` | `fetch` falló o la respuesta no era JSON utilizable. |
+
+**Reintentos del cliente**: solo se reenvía la petición cuando el fallo es de transporte (`NETWORK_FAILURE` o `HTTP_ERROR`) y la acción es segura para repetir — lecturas puras (`ping`, `get*`) y las tres escrituras con `request_id` (`createClient`, `createActivity`, `addPayment`). Se reenvía **el mismo cuerpo byte a byte** para conservar la huella de idempotencia. Los errores de la aplicación (`success: false`) nunca se reintentan. Además, `src/services/api.ts` conserva el `request_id` de una creación fallida y lo reutiliza si el usuario vuelve a intentar la misma operación.
 
 ---
 

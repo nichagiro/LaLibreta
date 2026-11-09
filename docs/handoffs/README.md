@@ -11,7 +11,7 @@ Este directorio contiene la bitácora y registros de traspaso (*handoffs*) gener
 | [`architecture.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/handoffs/architecture.md) | **Sesión 1**: Arquitectura y Coordinación | Contratos TypeScript (`src/types/index.ts`), configuración Vite/Tailwind, lineamientos de gobernanza en `AGENTS.md`. |
 | [`design.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/handoffs/design.md) | **Sesión 2**: Diseño y Sistema UI | Tokens de diseño, 28 componentes atómicos de UI («La Libreta»), formato COP, y catálogo visual interactivo (`?ui=1`). |
 | [`backend.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/handoffs/backend.md) | **Sesión 3**: Persistencia y Backend | Script `apps-script/Code.gs` para Google Sheets, lógica autoritativa, deduplicación con `request_id`, 12 pruebas unitarias con dobles. |
-| [`frontend.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/handoffs/frontend.md) | **Sesión 4**: Frontend e Integración | Pantallas (`dashboard`, `clients`, `activities`, `settings`), adaptador dual (mock + sheets), motor de PDF con `pdf-lib` y 8 pruebas de integración. |
+| [`frontend.md`](file:///C:/Users/djcha/Documents/Code/Ingresos/docs/handoffs/frontend.md) | **Sesión 4**: Frontend e Integración | Pantallas (`dashboard`, `clients`, `activities`, `settings`), adaptador dual (mock + sheets), motor de PDF con `pdf-lib` y 9 pruebas de integración. |
 
 ---
 
@@ -27,7 +27,7 @@ Este directorio contiene la bitácora y registros de traspaso (*handoffs*) gener
 - ✅ **Gestión de Categorías**: Creación, renombrado y desactivación lógica preservando el historial.
 - ✅ **Emisión de PDF**: Generación local nativa con `pdf-lib`, previsualización visual, exclusión estricta de notas internas y formato A4 listo para compartir manualmente.
 - ✅ **Adaptador Dual**: Modo de prueba en memoria completamente autónomo que permite utilizar la aplicación sin conexión previa a Google.
-- ✅ **Pruebas Automatizadas**: 20/20 pruebas automatizadas aprobadas (12 backend con dobles + 8 frontend de integración).
+- ✅ **Pruebas Automatizadas**: 21/21 pruebas automatizadas aprobadas (12 backend con dobles + 9 frontend de integración, incluyendo reintentos de red).
 
 ### B. Pendientes Reales (Requieren Acción del Usuario / Entorno Operativo)
 1. **Despliegue y Autorización del Web App en Google Apps Script**:

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { mockAdapter } from '../src/services/mock-adapter.ts';
 import { buildActivityPdf } from '../src/features/pdf/generatePdf.ts';
+import { sheetsApi } from '../src/services/sheets-api.ts';
+import { api } from '../src/services/api.ts';
 
 test('1. Flujo de Clientes: creación, consulta y desactivación lógica', async () => {
   mockAdapter.resetData();
@@ -220,4 +222,92 @@ test('8. Resumen Financiero: cálculos correctos dentro de rango', async () => {
   assert.equal(typeof summary.total_balance_pending, 'number');
   assert.ok(summary.activities_count.total >= 0);
   assert.ok(summary.activities_count.completed >= 0);
+});
+
+test('9. Reintentos: reenvío idéntico conservando la clave de idempotencia', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let transportFailures = 0;
+
+  const okResponse = (body) => ({ ok: true, status: 200, json: async () => body });
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: init.body });
+    if (transportFailures > 0) {
+      transportFailures -= 1;
+      throw new TypeError('fetch failed');
+    }
+    return okResponse({
+      success: true,
+      data: {
+        id: 'cli_test_0001',
+        name: 'Prueba',
+        phone: '',
+        email: '',
+        notes: '',
+        is_active: true,
+        created_at: '2026-11-06T00:00:00.000Z',
+        updated_at: '2026-11-06T00:00:00.000Z',
+      },
+      timestamp: '2026-11-06T00:00:00.000Z',
+    });
+  };
+
+  try {
+    sheetsApi.configure('https://example.test/exec', 'token-de-prueba');
+
+    // (a) Falla de transporte: la operación crítica se reenvía con el cuerpo exacto
+    transportFailures = 1;
+    const retried = await sheetsApi.execute('createClient', {
+      name: 'Cliente Con Reintento',
+      request_id: 'client_prueba_0001',
+    });
+    assert.equal(retried.id, 'cli_test_0001');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].body, calls[1].body);
+    assert.equal(JSON.parse(calls[1].body).payload.request_id, 'client_prueba_0001');
+
+    // (b) Si los dos intentos fallan, el reintento del usuario reutiliza el request_id
+    calls.length = 0;
+    transportFailures = 2;
+    await assert.rejects(
+      () => api.createClient({ name: 'Cliente Persistente', phone: '+57 300 000 0000' }),
+      (err) => err.code === 'NETWORK_FAILURE'
+    );
+    assert.equal(calls.length, 2);
+
+    transportFailures = 0;
+    const created = await api.createClient({ name: 'Cliente Persistente', phone: '+57 300 000 0000' });
+    assert.ok(created.id);
+    assert.equal(calls.length, 3);
+    const firstAttempt = JSON.parse(calls[0].body);
+    const userRetry = JSON.parse(calls[2].body);
+    assert.equal(firstAttempt.action, 'createClient');
+    assert.equal(firstAttempt.payload.request_id, userRetry.payload.request_id);
+
+    // (c) Un error de la aplicación (success: false) jamás se reintenta
+    calls.length = 0;
+    globalThis.fetch = async (url, init) => {
+      calls.push(init.body);
+      return okResponse({
+        success: false,
+        error: { code: 'OVERPAYMENT_NOT_ALLOWED', message: 'El monto supera el saldo pendiente.' },
+        timestamp: '2026-11-06T00:00:00.000Z',
+      });
+    };
+    await assert.rejects(
+      () =>
+        sheetsApi.execute('addPayment', {
+          activity_id: 'act_0001',
+          payment_date: '2026-11-06',
+          amount: 50000,
+          payment_method: 'nequi',
+          request_id: 'pay_prueba_0001',
+        }),
+      (err) => err.code === 'OVERPAYMENT_NOT_ALLOWED'
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

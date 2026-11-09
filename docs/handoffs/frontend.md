@@ -147,7 +147,7 @@ npm run build
 # 4. Pruebas unitarias de persistencia y backend (12/12 aprobadas)
 npm run test:backend
 
-# 5. Pruebas de integración de frontend y PDF (8/8 aprobadas)
+# 5. Pruebas de integración de frontend y PDF (9/9 aprobadas)
 npm run test:frontend
 ```
 
@@ -156,8 +156,8 @@ npm run test:frontend
 | Suite de Pruebas | Casos Ejecutados | Casos Aprobados | Estado |
 | :--- | :---: | :---: | :---: |
 | Backend & Apps Script (`test:backend`) | 12 | 12 | ✅ APROBADO |
-| Frontend & Flujos de Integración (`test:frontend`) | 8 | 8 | ✅ APROBADO |
-| **Total de Pruebas** | **20** | **20** | **100% APROBADO** |
+| Frontend & Flujos de Integración (`test:frontend`) | 9 | 9 | ✅ APROBADO |
+| **Total de Pruebas** | **21** | **21** | **100% APROBADO** |
 
 ### Métricas del Build Estático de Producción (`dist/`)
 

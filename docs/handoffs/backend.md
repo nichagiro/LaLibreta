@@ -41,6 +41,7 @@ El contrato completo está en [api-contract.md](../api-contract.md). Fechas de n
 - No se cambia `total_value` cuando ya hay pagos. La actualización valida todo el payload antes de persistir la fila.
 - Categorías desactivadas conservan el historial, pero no se aceptan como referencia en nuevas/actualizadas actividades.
 - `request_id` con huella se guarda en la misma fila para `createClient`, `createActivity` y `addPayment`; las demás acciones no tienen deduplicación.
+- En el cliente, `src/services/sheets-api.ts` reenvía una sola vez las fallas de transporte de las lecturas y de esas tres escrituras, siempre con el mismo cuerpo, y `src/services/api.ts` conserva el `request_id` de una creación fallida para que el reintento del usuario no duplique registros. Un `success: false` nunca se reenvía.
 - Google Sheets no ofrece transacciones. El bloqueo serializa llamadas de la misma Apps Script Web App; no se promete rollback ni atomicidad transaccional.
 - Apps Script `ContentService` no permite asignar un estado HTTP personalizado: se interpreta el sobre JSON.
 - `VITE_APP_AUTH_TOKEN` queda visible en el bundle estático. Es una limitación explícita de la arquitectura elegida, no una credencial privada ni una autenticación robusta.
@@ -56,9 +57,12 @@ No añadir credenciales privadas de Google ni secretos reales al `.env.example`.
 
 `npm run test:backend` usa dobles de Google Apps Script/Sheets y cubre creación/consulta de cliente, actividad, pagos parciales/completos, validación de montos/referencias, cancelación/sobrepago, desactivación de categoría, cobros por fecha de pago, reintentos, datos PDF sin notas privadas, autorización y fallos simulados de Sheets.
 
+`npm run test:frontend` incluye la prueba **9. Reintentos**, que simula la red con un `fetch` sustituto y verifica: reenvío con cuerpo idéntico ante una falla de transporte, reutilización del mismo `request_id` cuando el usuario reintenta una creación fallida, y ausencia total de reintentos ante un `success: false`.
+
 Resultados:
 
 - `npm run test:backend`: **12/12 pruebas aprobadas** con dobles; no son pruebas contra Google.
+- `npm run test:frontend`: **9/9 pruebas aprobadas** con dobles de red; no son pruebas contra Google.
 - `npm run lint`: **aprobado**.
 - `npm run typecheck`: **aprobado**.
 - `npm run build`: **aprobado**, compilación estática SPA generada en `dist/`.
