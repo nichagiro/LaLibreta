@@ -36,7 +36,7 @@ export function Panel({
   const hasHeader = Boolean(title || actions);
 
   return (
-    <section className={cn('rounded-lg border border-rule bg-panel', className)}>
+    <section className={cn('rounded-lg border border-rule bg-panel overflow-hidden', className)}>
       {hasHeader ? (
         <header className="flex flex-wrap items-start justify-between gap-3 px-4 pt-4 sm:px-5">
           <div className="min-w-0">

@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { ActivityPdfData } from '@/types';
-import { formatCop, formatDateEs } from '@/theme/format';
+import { formatCop, formatDateEs, formatReferenceCode } from '@/theme/format';
 import { PAYMENT_METHOD_LABELS } from '@/theme/status';
 
 /**
@@ -80,6 +80,9 @@ function wrapText(
 export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
 
+  // Código de referencia legible y formateado (sin prefijos crudos de BD desbordados)
+  const displayRefCode = formatReferenceCode(data.reference_code, data.activity.date);
+
   // Fuentes estándar integradas (ligeras, sin descargas remotas)
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -115,25 +118,25 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   };
 
   const drawFooter = (targetPage: typeof page, isLast: boolean) => {
-    const footerY = 35;
+    const footerY = 38;
     targetPage.drawLine({
-      start: { x: marginX, y: footerY + 18 },
-      end: { x: marginX + contentWidth, y: footerY + 18 },
-      thickness: 1,
-      color: colorRule,
+      start: { x: marginX, y: footerY + 22 },
+      end: { x: marginX + contentWidth, y: footerY + 22 },
+      thickness: 1.5,
+      color: colorInk,
     });
 
     const disclaimer = 'Este documento resume un servicio prestado y los pagos recibidos. No es una factura.';
     targetPage.drawText(sanitizeText(disclaimer), {
       x: marginX,
-      y: footerY + 6,
+      y: footerY + 8,
       size: 8,
       font: fontRegular,
       color: colorMuted,
     });
 
-    const info = `Comprobante ${data.reference_code} · Generado el ${formatDateEs(data.generation_date)}${
-      data.issuer.business_name ? ` · ${data.issuer.business_name}` : ''
+    const info = `Comprobante generado el ${formatDateEs(data.generation_date)} · ${
+      data.issuer.business_name || data.issuer.name
     }`;
     targetPage.drawText(sanitizeText(info), {
       x: marginX,
@@ -144,8 +147,10 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     });
 
     if (!isLast) {
-      targetPage.drawText('(Continúa en la siguiente página)', {
-        x: marginX + contentWidth - 140,
+      const contStr = '(Continúa en la siguiente página)';
+      const contW = fontBold.widthOfTextAtSize(contStr, 8);
+      targetPage.drawText(contStr, {
+        x: marginX + contentWidth - contW,
         y: footerY - 5,
         size: 8,
         font: fontBold,
@@ -155,7 +160,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   };
 
   const drawContinuationHeader = (targetPage: typeof page) => {
-    targetPage.drawText(sanitizeText(`${data.reference_code} — ${data.activity.title}`), {
+    targetPage.drawText(sanitizeText(`${displayRefCode} — ${data.activity.title}`), {
       x: marginX,
       y,
       size: 9,
@@ -192,8 +197,9 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     color: colorInk,
   });
 
+  const initW = fontBold.widthOfTextAtSize(initials, 13);
   page.drawText(initials, {
-    x: marginX + 8,
+    x: marginX + (36 - initW) / 2,
     y: y - 24,
     size: 13,
     font: fontBold,
@@ -232,26 +238,35 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     });
   }
 
-  // Lado derecho: Tipo de documento y referencia
+  // Lado derecho: Tipo de documento y referencia (alineados estrictamente a la derecha)
   const docTypeTitle = data.activity.type === 'service' ? 'Resumen de servicio' : 'Resumen de venta';
+  const docTypeW = fontRegular.widthOfTextAtSize(docTypeTitle, 9);
   page.drawText(docTypeTitle, {
-    x: marginX + contentWidth - 140,
+    x: marginX + contentWidth - docTypeW,
     y: y - 10,
     size: 9,
     font: fontRegular,
     color: colorMuted,
   });
 
-  page.drawText(data.reference_code, {
-    x: marginX + contentWidth - 140,
+  let refFontSize = 12;
+  let codeW = fontBold.widthOfTextAtSize(displayRefCode, refFontSize);
+  if (codeW > 180) {
+    refFontSize = 10;
+    codeW = fontBold.widthOfTextAtSize(displayRefCode, refFontSize);
+  }
+  page.drawText(displayRefCode, {
+    x: marginX + contentWidth - codeW,
     y: y - 24,
-    size: 12,
+    size: refFontSize,
     font: fontBold,
     color: colorInk,
   });
 
-  page.drawText(`Emitido el ${formatDateEs(data.generation_date)}`, {
-    x: marginX + contentWidth - 140,
+  const emittedStr = `Emitido el ${formatDateEs(data.generation_date)}`;
+  const emittedW = fontRegular.widthOfTextAtSize(emittedStr, 8.5);
+  page.drawText(emittedStr, {
+    x: marginX + contentWidth - emittedW,
     y: y - 36,
     size: 8.5,
     font: fontRegular,
@@ -291,28 +306,30 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     color: colorInk,
   });
 
-  const clientContact = [data.client.phone, data.client.email].filter(Boolean).join('  ·  ');
-  if (clientContact) {
-    page.drawText(sanitizeText(clientContact), {
-      x: marginX,
-      y: y - 27,
-      size: 9,
-      font: fontRegular,
-      color: colorSubtle,
-    });
-  }
+  const clientContact = [data.client.phone, data.client.email].filter(Boolean).join('  ·  ') || '—';
+  page.drawText(sanitizeText(clientContact), {
+    x: marginX,
+    y: y - 27,
+    size: 9,
+    font: fontRegular,
+    color: colorSubtle,
+  });
 
-  // Lado derecho: Fecha y categoría
-  page.drawText('Fecha de la actividad', {
-    x: marginX + contentWidth - 160,
+  // Lado derecho: Fecha y categoría (alineados estrictamente a la derecha)
+  const dateLabel = 'Fecha de la actividad';
+  const dateLabelW = fontRegular.widthOfTextAtSize(dateLabel, 8.5);
+  page.drawText(dateLabel, {
+    x: marginX + contentWidth - dateLabelW,
     y,
     size: 8.5,
     font: fontRegular,
     color: colorMuted,
   });
 
-  page.drawText(formatDateEs(data.activity.date), {
-    x: marginX + contentWidth - 160,
+  const dateValueStr = formatDateEs(data.activity.date);
+  const dateValueW = fontBold.widthOfTextAtSize(dateValueStr, 11);
+  page.drawText(dateValueStr, {
+    x: marginX + contentWidth - dateValueW,
     y: y - 14,
     size: 11,
     font: fontBold,
@@ -320,8 +337,10 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   });
 
   const actTypeLabel = data.activity.type === 'service' ? 'Servicio' : 'Venta';
-  page.drawText(sanitizeText(`${actTypeLabel}  ·  ${data.activity.category_name}`), {
-    x: marginX + contentWidth - 160,
+  const actCatStr = sanitizeText(`${actTypeLabel}  ·  ${data.activity.category_name}`);
+  const actCatW = fontRegular.widthOfTextAtSize(actCatStr, 9);
+  page.drawText(actCatStr, {
+    x: marginX + contentWidth - actCatW,
     y: y - 27,
     size: 9,
     font: fontRegular,
@@ -391,7 +410,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   });
 
   // Fila 1: Valor total
-  page.drawText('Valor total acordado', {
+  page.drawText('Valor total', {
     x: marginX + 14,
     y: y - 18,
     size: 9.5,
@@ -409,7 +428,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   });
 
   // Fila 2: Dinero recibido
-  page.drawText('Dinero recibido (Abonos acumulados)', {
+  page.drawText('Dinero recibido', {
     x: marginX + 14,
     y: y - 34,
     size: 9.5,
@@ -443,11 +462,11 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     color: colorInk,
   });
   const valPendStr = formatCop(data.activity.balance_pending);
-  const valPendW = fontBold.widthOfTextAtSize(valPendStr, 13);
+  const valPendW = fontBold.widthOfTextAtSize(valPendStr, 12);
   page.drawText(valPendStr, {
     x: marginX + contentWidth - 14 - valPendW,
     y: y - 60,
-    size: 13,
+    size: 12,
     font: fontBold,
     color: data.activity.balance_pending > 0 ? colorOwed : colorMuted,
   });
@@ -460,7 +479,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
 
   checkPageBreak(70);
 
-  page.drawText('Abonos registrados', {
+  page.drawText('Abonos realizados', {
     x: marginX,
     y,
     size: 10,
@@ -491,9 +510,17 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     y -= 12;
 
     page.drawText('Fecha', { x: marginX, y, size: 8.5, font: fontBold, color: colorMuted });
-    page.drawText('Método', { x: marginX + 100, y, size: 8.5, font: fontBold, color: colorMuted });
-    page.drawText('Detalle / Comprobante', { x: marginX + 220, y, size: 8.5, font: fontBold, color: colorMuted });
-    page.drawText('Monto', { x: marginX + contentWidth - 70, y, size: 8.5, font: fontBold, color: colorMuted });
+    page.drawText('Método', { x: marginX + 110, y, size: 8.5, font: fontBold, color: colorMuted });
+    page.drawText('Detalle', { x: marginX + 225, y, size: 8.5, font: fontBold, color: colorMuted });
+
+    const montoHeaderW = fontBold.widthOfTextAtSize('Monto', 8.5);
+    page.drawText('Monto', {
+      x: marginX + contentWidth - montoHeaderW,
+      y,
+      size: 8.5,
+      font: fontBold,
+      color: colorMuted,
+    });
 
     y -= 8;
 
@@ -519,16 +546,16 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
 
       const methodLabel = PAYMENT_METHOD_LABELS[payment.method] || payment.method;
       page.drawText(sanitizeText(methodLabel), {
-        x: marginX + 100,
+        x: marginX + 110,
         y,
         size: 9,
         font: fontRegular,
         color: colorSubtle,
       });
 
-      const noteText = payment.notes ? payment.notes.slice(0, 32) : '—';
+      const noteText = payment.notes ? payment.notes.slice(0, 36) : '—';
       page.drawText(sanitizeText(noteText), {
-        x: marginX + 220,
+        x: marginX + 225,
         y,
         size: 8.5,
         font: fontRegular,
@@ -552,11 +579,11 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     page.drawLine({
       start: { x: marginX, y: y + 4 },
       end: { x: marginX + contentWidth, y: y + 4 },
-      thickness: 1,
+      thickness: 1.5,
       color: colorInk,
     });
 
-    page.drawText('Total pagado', {
+    page.drawText('Total recibido', {
       x: marginX,
       y: y - 8,
       size: 9.5,
@@ -617,7 +644,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   if (data.issuer.payment_instructions && data.issuer.payment_instructions.trim()) {
     checkPageBreak(55);
 
-    const instLines = wrapText(data.issuer.payment_instructions, contentWidth - 20, fontRegular, 8.5);
+    const instLines = wrapText(data.issuer.payment_instructions, contentWidth - 24, fontRegular, 8.5);
     const instBoxHeight = Math.max(38, instLines.length * 12 + 22);
 
     page.drawRectangle({
@@ -630,8 +657,8 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
       borderWidth: 0.5,
     });
 
-    page.drawText('Instrucciones y formas de pago', {
-      x: marginX + 10,
+    page.drawText('Formas de pago', {
+      x: marginX + 12,
       y: y - 14,
       size: 8.5,
       font: fontBold,

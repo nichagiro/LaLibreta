@@ -20,6 +20,24 @@ import {
   payments as fixturePayments,
 } from '@/components/ui/gallery/fixtures';
 
+/** Métodos de pago admitidos. Debe coincidir con la lista del backend. */
+const PAYMENT_METHODS: readonly string[] = [
+  'transferencia_bancaria',
+  'nequi',
+  'daviplata',
+  'efectivo',
+  'tarjeta',
+  'otro',
+];
+
+/** Estados operativos admitidos. Debe coincidir con la lista del backend. */
+const ACTIVITY_STATUSES: readonly string[] = [
+  'pending',
+  'in_progress',
+  'completed',
+  'cancelled',
+];
+
 /**
  * Adaptador de Pruebas en Memoria (Mock Adapter)
  *
@@ -241,6 +259,9 @@ class MockApiAdapter {
     if (!payload.category_id) throw { code: 'VALIDATION_ERROR', message: 'La categoría es obligatoria.' };
     if (!payload.title || !payload.title.trim()) throw { code: 'VALIDATION_ERROR', message: 'El título es obligatorio.' };
     if (!payload.activity_date) throw { code: 'VALIDATION_ERROR', message: 'La fecha es obligatoria.' };
+    if (payload.status !== undefined && ACTIVITY_STATUSES.indexOf(payload.status) < 0) {
+      throw { code: 'VALIDATION_ERROR', message: 'Debes seleccionar el estado operativo del trabajo.' };
+    }
     if (typeof payload.total_value !== 'number' || payload.total_value < 0 || !Number.isInteger(payload.total_value)) {
       throw { code: 'INVALID_MONETARY_VALUE', message: 'El valor total debe ser un entero positivo en COP.' };
     }
@@ -365,6 +386,11 @@ class MockApiAdapter {
 
     if (typeof payload.amount !== 'number' || payload.amount <= 0 || !Number.isInteger(payload.amount)) {
       throw { code: 'INVALID_MONETARY_VALUE', message: 'El monto del abono debe ser un número entero mayor a cero.' };
+    }
+
+    // Mismo contrato que el backend: el método de pago debe estar elegido.
+    if (PAYMENT_METHODS.indexOf(payload.payment_method) < 0) {
+      throw { code: 'VALIDATION_ERROR', message: 'Debes seleccionar un método de pago.' };
     }
 
     this.applyAuthoritativeCalculations(activity);

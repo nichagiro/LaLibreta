@@ -2,27 +2,92 @@ import { useState, useEffect, useCallback } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { Panel } from '@/components/ui/Panel';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { Money } from '@/components/ui/Money';
 import { DateField } from '@/components/ui/DateField';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { Alert } from '@/components/ui/Alert';
 import { IconPlus, IconClients } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { Activity, Category, Client, FinancialSummary } from '@/types';
 import { formatDateEs } from '@/theme/format';
-import { ActivityDetailModal } from '../activities/ActivityDetailModal';
 import { ActivityFormDialog } from '../activities/ActivityFormDialog';
 import { ClientFormDialog } from '../clients/ClientFormDialog';
+
+/**
+ * Deriva el resumen financiero a partir de la lista de actividades en el cliente.
+ * Se utiliza como respaldo preventivo si el backend remoto devuelve ceros debido
+ * a desfases de formato de celda en Google Sheets o versiones anteriores del script.
+ */
+function deriveSummaryFallback(
+  acts: Activity[],
+  from: string,
+  to: string,
+): FinancialSummary {
+  let totalActivitiesValue = 0;
+  let totalBalancePending = 0;
+  let totalMoneyReceived = 0;
+  const counts = { total: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
+
+  acts.forEach((act) => {
+    const actDate = act.activity_date || '';
+    if (!from || !to || (actDate >= from && actDate <= to)) {
+      counts.total++;
+      if (counts[act.status] !== undefined) {
+        counts[act.status]++;
+      }
+      if (act.status !== 'cancelled') {
+        totalActivitiesValue += act.total_value;
+        totalBalancePending += act.balance_pending || 0;
+        totalMoneyReceived += act.total_received || 0;
+      }
+    }
+  });
+
+  return {
+    period_from: from,
+    period_to: to,
+    total_activities_value: totalActivitiesValue,
+    total_money_received: totalMoneyReceived,
+    total_balance_pending: totalBalancePending,
+    activities_count: counts,
+  };
+}
+
+function resolveSummary(
+  remoteSummary: FinancialSummary,
+  acts: Activity[],
+  from: string,
+  to: string,
+): FinancialSummary {
+  if (
+    remoteSummary.activities_count.total > 0 ||
+    remoteSummary.total_activities_value > 0 ||
+    remoteSummary.total_money_received > 0
+  ) {
+    return remoteSummary;
+  }
+  const fallback = deriveSummaryFallback(acts, from, to);
+  if (fallback.activities_count.total > 0 || fallback.total_activities_value > 0) {
+    return fallback;
+  }
+  return remoteSummary;
+}
 
 export interface DashboardViewProps {
   onNavigateToActivities: () => void;
   onNavigateToClients: () => void;
+  onSelectActivity?: (activityId: string) => void;
 }
 
 export function DashboardView({
   onNavigateToActivities,
   onNavigateToClients,
+  onSelectActivity,
 }: DashboardViewProps) {
   // Rango de fechas por defecto: Mes actual (noviembre 2026 según contexto o fecha actual)
   const today = new Date();
@@ -34,57 +99,123 @@ export function DashboardView({
 
   const [dateFrom, setDateFrom] = useState(firstDay);
   const [dateTo, setDateTo] = useState(lastDay);
+  const [appliedFrom, setAppliedFrom] = useState(firstDay);
+  const [appliedTo, setAppliedTo] = useState(lastDay);
   const [periodPreset, setPeriodPreset] = useState<'current_month' | 'prev_month' | 'custom'>('current_month');
+  const [dateError, setDateError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
+  const [allActivities, setAllActivities] = useState<Activity[]>([]);
   const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterLoading, setFilterLoading] = useState(false);
 
   // Modales
-  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [activityFormOpen, setActivityFormOpen] = useState(false);
   const [clientFormOpen, setClientFormOpen] = useState(false);
 
-  const loadDashboardData = useCallback(async () => {
+  /**
+   * Carga completa inicial: actividades recientes, clientes, categorías y resumen financiero.
+   * Se ejecuta al montar la vista de Inicio y cuando se registra una nueva actividad.
+   */
+  const loadInitialData = useCallback(async (force = false) => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [sum, acts, clis, cats] = await Promise.all([
-        api.getSummary(dateFrom, dateTo),
-        api.getActivities(),
-        api.getClients(),
-        api.getCategories(),
+        api.getSummary(appliedFrom, appliedTo, { forceRefresh: force }),
+        api.getActivities({ forceRefresh: force }),
+        api.getClients({ forceRefresh: force }),
+        api.getCategories({ forceRefresh: force }),
       ]);
-      setSummary(sum);
-      // Ordenar actividades por fecha descendente y tomar las 5 más recientes
-      const sorted = [...acts].sort((a, b) => b.activity_date.localeCompare(a.activity_date));
+      setAllActivities(acts);
+      setSummary(resolveSummary(sum, acts, appliedFrom, appliedTo));
+      // Ordenar actividades por fecha descendente de forma segura y tomar las 5 más recientes
+      const sorted = [...acts].sort((a, b) => (b.activity_date || '').localeCompare(a.activity_date || ''));
       setRecentActivities(sorted.slice(0, 5));
       setClients(clis);
       setCategories(cats);
-    } catch {
-      // Manejo de error
+    } catch (err: unknown) {
+      setLoadError((err as Error)?.message || 'No fue posible cargar los datos del inicio.');
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [appliedFrom, appliedTo]);
 
   useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+    loadInitialData();
+  }, [loadInitialData]);
 
-  const handlePeriodChange = (preset: 'current_month' | 'prev_month' | 'custom') => {
+  /**
+   * Filtrado rápido por fechas:
+   * Valida localmente para no hacer llamadas inválidas y consulta ÚNICAMENTE api.getSummary,
+   * evitando saturar Google Apps Script con peticiones múltiples concurrentes.
+   */
+  const handleApplyFilter = async () => {
+    if (!dateFrom || !dateTo) {
+      setDateError('Debes seleccionar tanto la fecha inicial como la final.');
+      return;
+    }
+    if (dateFrom > dateTo) {
+      setDateError('La fecha inicial no puede ser posterior a la fecha final.');
+      return;
+    }
+    setDateError(null);
+
+    setFilterLoading(true);
+    try {
+      const newSummary = await api.getSummary(dateFrom, dateTo);
+      setSummary(resolveSummary(newSummary, allActivities, dateFrom, dateTo));
+      setAppliedFrom(dateFrom);
+      setAppliedTo(dateTo);
+    } catch (err: unknown) {
+      setDateError((err as Error)?.message || 'No fue posible consultar el resumen financiero.');
+    } finally {
+      setFilterLoading(false);
+    }
+  };
+
+  /**
+   * Cambio de presets rápidos (Mes actual, Mes anterior):
+   * Calcula las fechas canónicas y actualiza el resumen del período.
+   */
+  const handlePeriodChange = async (preset: 'current_month' | 'prev_month' | 'custom') => {
     setPeriodPreset(preset);
+    setDateError(null);
+
+    let targetFrom = dateFrom;
+    let targetTo = dateTo;
+
     if (preset === 'current_month') {
-      setDateFrom(firstDay);
-      setDateTo(lastDay);
+      targetFrom = firstDay;
+      targetTo = lastDay;
     } else if (preset === 'prev_month') {
       const prevDate = new Date(currentYear, today.getMonth() - 1, 1);
       const prevY = prevDate.getFullYear();
       const prevM = String(prevDate.getMonth() + 1).padStart(2, '0');
       const prevLast = new Date(prevY, prevDate.getMonth() + 1, 0).getDate();
-      setDateFrom(`${prevY}-${prevM}-01`);
-      setDateTo(`${prevY}-${prevM}-${String(prevLast).padStart(2, '0')}`);
+      targetFrom = `${prevY}-${prevM}-01`;
+      targetTo = `${prevY}-${prevM}-${String(prevLast).padStart(2, '0')}`;
+    } else {
+      return;
+    }
+
+    setDateFrom(targetFrom);
+    setDateTo(targetTo);
+
+    setFilterLoading(true);
+    try {
+      const newSummary = await api.getSummary(targetFrom, targetTo);
+      setSummary(resolveSummary(newSummary, allActivities, targetFrom, targetTo));
+      setAppliedFrom(targetFrom);
+      setAppliedTo(targetTo);
+    } catch (err: unknown) {
+      setDateError((err as Error)?.message || 'No fue posible consultar el resumen para el período seleccionado.');
+    } finally {
+      setFilterLoading(false);
     }
   };
 
@@ -186,13 +317,20 @@ export function DashboardView({
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleApplyFilter();
+            }}
+            className="flex flex-wrap sm:flex-nowrap items-end gap-2 w-full md:w-auto"
+          >
             <DateField
               label="Desde"
               value={dateFrom}
               onChange={(e) => {
                 setPeriodPreset('custom');
                 setDateFrom(e.target.value);
+                if (dateError) setDateError(null);
               }}
             />
             <DateField
@@ -201,10 +339,42 @@ export function DashboardView({
               onChange={(e) => {
                 setPeriodPreset('custom');
                 setDateTo(e.target.value);
+                if (dateError) setDateError(null);
               }}
             />
-          </div>
+            <Button
+              type="submit"
+              variant="secondary"
+              loading={filterLoading}
+              className="shrink-0"
+            >
+              Filtrar
+            </Button>
+          </form>
         </div>
+
+        {dateError ? (
+          <div className="mt-3">
+            <Alert variant="error" onDismiss={() => setDateError(null)}>
+              {dateError}
+            </Alert>
+          </div>
+        ) : null}
+
+        {loadError ? (
+          <div className="mt-3">
+            <Alert
+              variant="error"
+              action={
+                <Button size="sm" variant="secondary" onClick={() => loadInitialData(true)}>
+                  Reintentar
+                </Button>
+              }
+            >
+              {loadError}
+            </Alert>
+          </div>
+        ) : null}
       </PageHeader>
 
       {/* Indicadores Principales del Período */}
@@ -213,12 +383,14 @@ export function DashboardView({
           label="Dinero Recibido"
           value={summary?.total_money_received ?? 0}
           tone="received"
+          loading={loading || filterLoading}
           detail="Abonos y cobros cobrados efectivamente dentro del rango de fechas."
         />
 
         <MetricCard
           label="Valor de Actividades"
           value={summary?.total_activities_value ?? 0}
+          loading={loading || filterLoading}
           detail="Total acordado en servicios y ventas no canceladas en el período."
         />
 
@@ -226,6 +398,7 @@ export function DashboardView({
           label="Saldo Pendiente"
           value={summary?.total_balance_pending ?? 0}
           tone={(summary?.total_balance_pending ?? 0) > 0 ? 'owed' : 'default'}
+          loading={loading || filterLoading}
           detail="Cartera pendiente por cobrar de actividades del período analizado."
         />
       </div>
@@ -233,82 +406,88 @@ export function DashboardView({
       {/* Conteo Operativo de Actividades */}
       {summary?.activities_count ? (
         <div className="p-4 bg-white border border-rule rounded-lg">
-          <span className="text-xs font-semibold text-surface-500 uppercase tracking-wider block mb-3">
-            Estado Operativo de Actividades en el Período ({summary.activities_count.total})
-          </span>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-surface-500 uppercase tracking-wider block">
+              Estado Operativo de Actividades en el Período ({summary.activities_count.total})
+            </span>
+            {filterLoading ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-surface-400 font-medium">
+                <Spinner size={11} label="Actualizando conteos..." />
+                <span>Actualizando…</span>
+              </span>
+            ) : null}
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div className="p-2.5 rounded border border-rule bg-surface-50">
               <span className="text-surface-500 block">Pendientes:</span>
               <span className="text-base font-semibold text-surface-900">
-                {summary.activities_count.pending}
+                {filterLoading ? <Skeleton className="h-5 w-8 mt-0.5" /> : summary.activities_count.pending}
               </span>
             </div>
             <div className="p-2.5 rounded border border-rule bg-surface-50">
               <span className="text-surface-500 block">En Proceso:</span>
               <span className="text-base font-semibold text-accent">
-                {summary.activities_count.in_progress}
+                {filterLoading ? <Skeleton className="h-5 w-8 mt-0.5" /> : summary.activities_count.in_progress}
               </span>
             </div>
             <div className="p-2.5 rounded border border-rule bg-surface-50">
               <span className="text-surface-500 block">Finalizadas:</span>
               <span className="text-base font-semibold text-received">
-                {summary.activities_count.completed}
+                {filterLoading ? <Skeleton className="h-5 w-8 mt-0.5" /> : summary.activities_count.completed}
               </span>
             </div>
             <div className="p-2.5 rounded border border-rule bg-surface-50">
               <span className="text-surface-500 block">Canceladas:</span>
               <span className="text-base font-semibold text-surface-500">
-                {summary.activities_count.cancelled}
+                {filterLoading ? <Skeleton className="h-5 w-8 mt-0.5" /> : summary.activities_count.cancelled}
               </span>
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* Actividad Reciente */}
+      {/* Actividades Recientes */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-surface-900">Actividad Reciente</h3>
+          <h3 className="text-sm font-semibold text-surface-900">Actividades Recientes</h3>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={onNavigateToClients}>
               Directorio de clientes →
             </Button>
             <Button variant="ghost" size="sm" onClick={onNavigateToActivities}>
-              Ver todas las actividades →
+              {allActivities.length > 5
+                ? `Ver todas las actividades (${allActivities.length}) →`
+                : 'Ver todas las actividades →'}
             </Button>
           </div>
         </div>
 
-        <DataTable
-          columns={columns}
-          rows={recentActivities}
-          getRowKey={(row) => row.id}
-          caption="Actividades recientes"
-          onRowClick={(row) => setSelectedActivityId(row.id)}
-          rowClassName={(row) => (row.status === 'cancelled' ? 'opacity-65' : undefined)}
-          loading={loading}
-        />
+        <Panel padding="flush">
+          <DataTable
+            columns={columns}
+            rows={recentActivities}
+            getRowKey={(row) => row.id}
+            caption="Actividades recientes"
+            onRowClick={(row) => {
+              if (onSelectActivity) {
+                onSelectActivity(row.id);
+              } else {
+                onNavigateToActivities();
+              }
+            }}
+            rowClassName={(row) => (row.status === 'cancelled' ? 'opacity-65' : undefined)}
+            loading={loading}
+          />
+        </Panel>
       </div>
-
-      {/* Modal de Detalle */}
-      <ActivityDetailModal
-        open={Boolean(selectedActivityId)}
-        onClose={() => setSelectedActivityId(null)}
-        activityId={selectedActivityId}
-        clients={clients}
-        categories={categories}
-        onActivityUpdated={loadDashboardData}
-        onEditActivity={() => {
-          setSelectedActivityId(null);
-          onNavigateToActivities();
-        }}
-      />
 
       {/* Modal Nueva Actividad */}
       <ActivityFormDialog
         open={activityFormOpen}
         onClose={() => setActivityFormOpen(false)}
-        onSaved={loadDashboardData}
+        onSaved={() => {
+          void loadInitialData();
+        }}
         clients={clients}
         categories={categories}
       />
@@ -317,7 +496,15 @@ export function DashboardView({
       <ClientFormDialog
         open={clientFormOpen}
         onClose={() => setClientFormOpen(false)}
-        onSaved={loadDashboardData}
+        onSaved={(saved) => {
+          // Crear/editar cliente no altera métricas: se refleja en el estado local.
+          setClients((prev) => {
+            const exists = prev.some((c) => c.id === saved.id);
+            return exists
+              ? prev.map((c) => (c.id === saved.id ? { ...c, ...saved } : c))
+              : [...prev, saved];
+          });
+        }}
       />
     </div>
   );

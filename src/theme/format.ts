@@ -76,13 +76,104 @@ const clockFormat = new Intl.DateTimeFormat('es-CO', {
 });
 
 /**
+ * Normaliza cualquier formato de fecha (Date, ISO con hora, texto canónico,
+ * `MM/DD/YYYY`, `DD/MM/YYYY` o fecha completa de Google Sheets como
+ * "Sun Feb 08 2026 00:00:00 GMT-0500 (hora estándar de Colombia)")
+ * a formato canónico "YYYY-MM-DD".
+ *
+ * Debe mantenerse en sincronía con `formatSheetDate` de `apps-script/Code.gs`:
+ * el backend es quien guarda y compara fechas, y el frontend solo las dora
+ * para lectura. Si las dos capas interpretan distinto un mismo texto, el
+ * resumen y la lista se contradicen.
+ */
+export function normalizeDate(raw: unknown): string {
+  if (!raw) return '';
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime())) return '';
+    const y = raw.getFullYear();
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const d = String(raw.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/.exec(str);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+  const ymdMatch = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/.exec(str);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2].padStart(2, '0')}-${ymdMatch[3].padStart(2, '0')}`;
+  }
+  // Interpreta cadenas devueltas por Google Sheets cuando la celda es tipo fecha:
+  // "Sun Feb 08 2026 00:00:00 GMT-0500 (hora estándar de Colombia)"
+  const months: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+  };
+  const match = /[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})/.exec(str);
+  if (match) {
+    const m = months[match[1].toLowerCase()];
+    if (m) {
+      return `${match[3]}-${m}-${match[2].padStart(2, '0')}`;
+    }
+  }
+  const monthFirst = /^([A-Za-z]{3})\s+(\d{1,2}),?\s+(\d{4})$/.exec(str);
+  if (monthFirst) {
+    const m = months[monthFirst[1].toLowerCase()];
+    if (m) return `${monthFirst[3]}-${m}-${monthFirst[2].padStart(2, '0')}`;
+  }
+  const dayFirst = /^(\d{1,2})\s+([A-Za-z]{3}),?\s+(\d{4})$/.exec(str);
+  if (dayFirst) {
+    const m = months[dayFirst[2].toLowerCase()];
+    if (m) return `${dayFirst[3]}-${m}-${dayFirst[1].padStart(2, '0')}`;
+  }
+  // "MM/DD/YYYY" o "DD/MM/YYYY": se desempata por los propios números.
+  // Cuando siguen siendo ambiguos se usa el orden mes/día, que es el que
+  // aplica `new Date()` en el navegador.
+  const numericMatch = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(str);
+  if (numericMatch) {
+    const first = Number(numericMatch[1]);
+    const second = Number(numericMatch[2]);
+    const year = numericMatch[3];
+    let day: number;
+    let month: number;
+    if (first > 12) {
+      day = first;
+      month = second;
+    } else if (second > 12) {
+      month = first;
+      day = second;
+    } else {
+      month = first;
+      day = second;
+    }
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+  const clean = str.replace(/\s*\([^)]*\)$/, '');
+  const parsed = new Date(clean);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return str;
+}
+
+/**
  * Interpreta `YYYY-MM-DD` como fecha de calendario local.
  *
  * `new Date('2026-11-04')` se resuelve como medianoche UTC y, en America/Bogota
  * (UTC-5), caería en el día 3. Por eso se construye con los componentes locales.
  */
 function parseCalendarDate(iso: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  const normalized = normalizeDate(iso);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -115,7 +206,32 @@ export function formatDateLongEs(iso: string): string {
  * Devuelve la cadena original si no es un timestamp válido.
  */
 export function formatTimestampEs(isoTimestamp: string): string {
-  const date = new Date(isoTimestamp);
+  if (!isoTimestamp) return '';
+  const clean = isoTimestamp.replace(/\s*\([^)]*\)$/, '');
+  const date = new Date(clean);
   if (Number.isNaN(date.getTime())) return isoTimestamp;
   return `${shortDateFormat.format(date)}, ${clockFormat.format(date)}`;
+}
+
+/**
+ * Normaliza y formatea un código de referencia legible para comprobantes PDF.
+ * Si recibe un identificador técnico de BD con prefijo "act_" y formato UUID o similar,
+ * lo formatea a una referencia limpia como "ACT-YYYY-XXXXXXXX" para evitar desbordes
+ * y presentar una numeración estética y profesional.
+ *
+ * @example formatReferenceCode("act_90caf568-8d7e-41db-977f-3fd1e5631c8e", "2026-10-25")
+ *          // "ACT-2026-90CAF568"
+ * @example formatReferenceCode("ACT-2026-001")
+ *          // "ACT-2026-001"
+ */
+export function formatReferenceCode(code: string, dateIso?: string): string {
+  if (!code) return '';
+  const trimmed = code.trim();
+  if (trimmed.startsWith('act_')) {
+    const rawSeq = trimmed.replace('act_', '').replace(/[^a-zA-Z0-9]/g, '');
+    const seq = (rawSeq.slice(0, 8) || '0001').toUpperCase();
+    const year = dateIso ? normalizeDate(dateIso).slice(0, 4) : '';
+    return year && year.length === 4 ? `ACT-${year}-${seq}` : `ACT-${seq}`;
+  }
+  return trimmed;
 }

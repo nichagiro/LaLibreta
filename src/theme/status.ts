@@ -101,10 +101,10 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 /** Orden de presentación en selectores. */
 export const PAYMENT_METHOD_ORDER: readonly PaymentMethod[] = [
+  'efectivo',
   'transferencia_bancaria',
   'nequi',
   'daviplata',
-  'efectivo',
   'tarjeta',
   'otro',
 ];

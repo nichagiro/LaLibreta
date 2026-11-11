@@ -149,7 +149,7 @@ export function ControlsSection() {
           <Example title="Selector de categoría">
             <Select
               label="Categoría"
-              placeholder="Elige una categoría"
+              placeholder="Selecciona una categoría"
               defaultValue="cat_5f21a0d4-0001"
               options={[
                 { value: 'cat_5f21a0d4-0001', label: 'Sistemas' },
@@ -160,6 +160,22 @@ export function ControlsSection() {
                 { value: 'cat_5f21a0d4-0006', label: 'Asesorías (desactivada)', disabled: true },
               ]}
               hint="Las categorías desactivadas siguen en el historial."
+            />
+          </Example>
+
+          <Example
+            title="Selector sin valor asignado"
+            note="La opción de entrada impide que el navegador deje marcada la primera opción: el formulario exige una elección explícita."
+          >
+            <Select
+              label="Método de pago"
+              placeholder="Selecciona un método de pago"
+              defaultValue=""
+              options={PAYMENT_METHOD_ORDER.map((method) => ({
+                value: method,
+                label: PAYMENT_METHOD_LABELS[method],
+              }))}
+              required
             />
           </Example>
 

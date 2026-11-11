@@ -6,7 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { IconDownload } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { ActivityPdfData } from '@/types';
-import { formatCop, formatDateEs } from '@/theme/format';
+import { formatCop, formatDateEs, formatReferenceCode } from '@/theme/format';
 import { PAYMENT_METHOD_LABELS } from '@/theme/status';
 
 export interface PdfPreviewDialogProps {
@@ -61,13 +61,17 @@ export function PdfPreviewDialog({
     };
   }, [open, activityId]);
 
+  const displayReferenceCode = data
+    ? formatReferenceCode(data.reference_code, data.activity.date)
+    : '';
+
   const handleDownload = async () => {
     if (!data) return;
     setDownloading(true);
     try {
       const { buildActivityPdf, downloadPdfBlob } = await import('./generatePdf');
       const pdfBytes = await buildActivityPdf(data);
-      const filename = `Comprobante-${data.reference_code}.pdf`;
+      const filename = `Comprobante-${displayReferenceCode || data.reference_code}.pdf`;
       downloadPdfBlob(pdfBytes, filename);
     } catch (err: unknown) {
       setError((err as Error)?.message || 'Error al generar el archivo PDF.');
@@ -157,7 +161,9 @@ export function PdfPreviewDialog({
                 <p className="text-[11px] text-surface-500">
                   {data.activity.type === 'service' ? 'Resumen de servicio' : 'Resumen de venta'}
                 </p>
-                <p className="text-sm font-semibold tabular-nums">{data.reference_code}</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {displayReferenceCode || data.reference_code}
+                </p>
                 <p className="mt-0.5 text-[11px] text-surface-500">
                   Emitido el {formatDateEs(data.generation_date)}
                 </p>

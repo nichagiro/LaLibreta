@@ -8,8 +8,6 @@ export interface SideNavProps {
   onNavigate: (key: string) => void;
   /** Identidad al tope del rail. Si se omite usa la marca por defecto. */
   brand?: ReactNode;
-  /** Pie del rail: por ejemplo el nombre del propietario. */
-  navFooter?: ReactNode;
   className?: string;
 }
 
@@ -25,7 +23,6 @@ export function SideNav({
   activeKey,
   onNavigate,
   brand,
-  navFooter,
   className,
 }: SideNavProps) {
   return (
@@ -85,10 +82,6 @@ export function SideNav({
           );
         })}
       </ul>
-
-      {navFooter ? (
-        <div className="border-t border-rule px-4 py-3.5 text-xs text-surface-500">{navFooter}</div>
-      ) : null}
     </nav>
   );
 }

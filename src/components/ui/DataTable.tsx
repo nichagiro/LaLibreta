@@ -110,7 +110,7 @@ export function DataTable<T>({
 
   if (rows.length === 0) {
     return (
-      <div className={className}>
+      <div className={cn('p-6 text-center', className)}>
         {emptyState ?? <EmptyState title="Todavía no hay registros" />}
       </div>
     );
@@ -126,13 +126,13 @@ export function DataTable<T>({
       <table className="hidden w-full border-collapse md:table">
         {caption ? <caption className="sr-only">{caption}</caption> : null}
         <thead>
-          <tr className="border-b border-rule">
+          <tr className="border-b border-ink bg-ink text-white">
             {columns.map((column) => (
               <th
                 key={column.key}
                 scope="col"
                 className={cn(
-                  'px-4 py-2.5 text-xs font-medium text-surface-500',
+                  'px-4 py-2.5 text-xs font-semibold text-white tracking-wide',
                   headerAlignClasses[column.align ?? 'left'],
                   column.className,
                 )}
@@ -149,7 +149,7 @@ export function DataTable<T>({
               key={getRowKey(row, index)}
               onClick={onRowClick ? () => onRowClick(row, index) : undefined}
               className={cn(
-                'transition-colors',
+                'transition-colors bg-white',
                 onRowClick && 'cursor-pointer hover:bg-surface-50',
                 rowClassName?.(row, index),
               )}
@@ -188,7 +188,7 @@ export function DataTable<T>({
       {/* ----------------------------------------------
           Móvil: registros apilados
       ---------------------------------------------- */}
-      <ul className="divide-y divide-rule md:hidden">
+      <ul className="divide-y divide-rule md:hidden bg-white">
         {rows.map((row, index) => {
           const primaryContent = primaryColumn.cell(row, index);
           const isClickable = onRowClick !== undefined;

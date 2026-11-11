@@ -14,6 +14,7 @@ import { SettingsView } from '@/features/settings/SettingsView';
 import { api } from '@/services/api';
 import { sheetsApi } from '@/services/sheets-api';
 import { navigateTo, useAppRoute, type AppRoute } from '@/router';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 // Muestra visual del sistema de diseño (Sesión 2). Se carga solo cuando la URL
 // trae `?ui=1`, así el bundle de la aplicación no se lleva la galería.
@@ -100,17 +101,6 @@ export const App: React.FC = () => {
           </div>
         </div>
       }
-      navFooter={
-        <div className="text-[11px] text-surface-500 space-y-1">
-          <p className="font-medium text-surface-700">Trabajador Independiente</p>
-          <a
-            href="?ui=1"
-            className="inline-block text-accent hover:underline text-[11px]"
-          >
-            Muestra del sistema UI →
-          </a>
-        </div>
-      }
     >
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Banner de Modo de Prueba si VITE_DATA_SOURCE=mock */}
@@ -122,10 +112,10 @@ export const App: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
               <span>
-                <strong>Modo de prueba (Adaptador en memoria):</strong> Los datos se gestionan
-                localmente durante la sesión. Para usar Google Sheets, asigna{' '}
-                <code className="font-mono">VITE_DATA_SOURCE=sheets</code> y reconstruye la
-                aplicación.
+                <strong>Modo de prueba:</strong> los datos se gestionan localmente durante la
+                sesión y no se guardan de forma permanente. Para usar el modo de producción,
+                asigna <code className="font-mono">VITE_DATA_SOURCE=sheets</code> y reconstruye
+                la aplicación.
               </span>
             </div>
             <button
@@ -138,15 +128,14 @@ export const App: React.FC = () => {
           </div>
         ) : null}
 
-        {/* Aviso estático cuando el modo es Sheets pero falta configuración */}
+        {/* Aviso estático cuando el modo de producción está activo pero falta configuración */}
         {!isMockMode && !sheetsConfigured ? (
           <div
             role="alert"
             className="p-3 bg-red-50 border border-red-300 rounded-lg text-xs text-red-900"
           >
-            <strong>Configuración de Sheets incompleta:</strong> el modo{' '}
-            <code className="font-mono">VITE_DATA_SOURCE=sheets</code> está activo, pero faltan{' '}
-            <code className="font-mono">VITE_APPS_SCRIPT_URL</code> y/o{' '}
+            <strong>Configuración incompleta:</strong> el modo de producción está activo, pero
+            faltan <code className="font-mono">VITE_APPS_SCRIPT_URL</code> y/o{' '}
             <code className="font-mono">VITE_APP_AUTH_TOKEN</code> en el archivo{' '}
             <code className="font-mono">.env</code>. No hay datos de respaldo ni conmutación
             automática: las operaciones fallarán hasta completar la configuración.
@@ -154,33 +143,36 @@ export const App: React.FC = () => {
         ) : null}
 
         {/* Vistas Principales */}
-        {activeRoute === 'dashboard' ? (
-          <DashboardView
-            onNavigateToActivities={() => navigateTo('activities')}
-            onNavigateToClients={() => navigateTo('clients')}
-          />
-        ) : null}
+        <ErrorBoundary>
+          {activeRoute === 'dashboard' ? (
+            <DashboardView
+              onNavigateToActivities={() => navigateTo('activities')}
+              onNavigateToClients={() => navigateTo('clients')}
+              onSelectActivity={(activityId) => navigateTo('activities', { id: activityId })}
+            />
+          ) : null}
 
-        {activeRoute === 'activities' ? (
-          <ActivitiesView
-            initialClientId={selectedClientIdForNewActivity}
-            onClearInitialClient={() => setSelectedClientIdForNewActivity(null)}
-          />
-        ) : null}
+          {activeRoute === 'activities' ? (
+            <ActivitiesView
+              initialClientId={selectedClientIdForNewActivity}
+              onClearInitialClient={() => setSelectedClientIdForNewActivity(null)}
+            />
+          ) : null}
 
-        {activeRoute === 'clients' ? (
-          <ClientsView
-            onCreateActivityWithClient={(clientId) => {
-              setSelectedClientIdForNewActivity(clientId);
-              navigateTo('activities');
-            }}
-            onSelectActivity={(_activityId) => {
-              navigateTo('activities');
-            }}
-          />
-        ) : null}
+          {activeRoute === 'clients' ? (
+            <ClientsView
+              onCreateActivityWithClient={(clientId) => {
+                setSelectedClientIdForNewActivity(clientId);
+                navigateTo('activities');
+              }}
+              onSelectActivity={(activityId) => {
+                navigateTo('activities', { id: activityId });
+              }}
+            />
+          ) : null}
 
-        {activeRoute === 'settings' ? <SettingsView /> : null}
+          {activeRoute === 'settings' ? <SettingsView /> : null}
+        </ErrorBoundary>
       </div>
     </AppShell>
   );

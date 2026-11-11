@@ -57,7 +57,7 @@ export function Tabs({ items, value, onChange, label, className }: TabsProps) {
       aria-label={label}
       onKeyDown={handleKeyDown}
       className={cn(
-        'scrollbar-thin -mb-px flex gap-1 overflow-x-auto border-b border-rule',
+        'scrollbar-thin -mb-px flex gap-1 overflow-x-auto overflow-y-hidden border-b border-rule',
         className,
       )}
     >
@@ -99,7 +99,7 @@ export function Tabs({ items, value, onChange, label, className }: TabsProps) {
             <span
               aria-hidden="true"
               className={cn(
-                'absolute inset-x-0 -bottom-px h-0.5',
+                'absolute inset-x-0 bottom-0 h-0.5',
                 active ? 'bg-ink' : 'bg-transparent',
               )}
             />

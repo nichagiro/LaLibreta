@@ -11,8 +11,6 @@ export interface AppShellProps {
   onNavigate: (key: string) => void;
   /** Identidad en el rail lateral. */
   brand?: ReactNode;
-  /** Pie del rail lateral. */
-  navFooter?: ReactNode;
   children: ReactNode;
   /** Clases para la columna de contenido. */
   mainClassName?: string;
@@ -34,7 +32,6 @@ export function AppShell({
   activeKey,
   onNavigate,
   brand,
-  navFooter,
   children,
   mainClassName,
 }: AppShellProps) {
@@ -45,7 +42,6 @@ export function AppShell({
         activeKey={activeKey}
         onNavigate={onNavigate}
         brand={brand}
-        navFooter={navFooter}
         className="hidden lg:flex lg:flex-col"
       />
 

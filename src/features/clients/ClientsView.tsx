@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { Panel } from '@/components/ui/Panel';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { Money } from '@/components/ui/Money';
 import { SearchField } from '@/components/ui/TextField';
@@ -65,6 +66,33 @@ export function ClientsView({
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  /**
+   * Inserta o reemplaza el cliente con el registro que la API devuelve ya
+   * persistido, evitando recargar clientes + actividades + pagos.
+   * Un cliente nuevo no tiene actividades: sus totales se calculan en 0.
+   */
+  const handleClientSaved = (saved: Client) => {
+    setClients((prev) => {
+      const exists = prev.some((c) => c.id === saved.id);
+      return exists
+        ? prev.map((c) => (c.id === saved.id ? { ...c, ...saved } : c))
+        : [...prev, saved];
+    });
+    setSelectedClient((prev) =>
+      prev && prev.id === saved.id ? { ...prev, ...saved } : prev
+    );
+  };
+
+  /** Estado actualizado con la respuesta de toggleClientStatus. */
+  const handleClientStatusToggled = (updated: Client) => {
+    setClients((prev) =>
+      prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
+    );
+    setSelectedClient((prev) =>
+      prev && prev.id === updated.id ? { ...prev, ...updated } : prev
+    );
+  };
 
   // Calcular totales por cliente
   const clientRows: ClientRowData[] = useMemo(() => {
@@ -225,44 +253,46 @@ export function ClientsView({
       </PageHeader>
 
       {/* Tabla de Clientes */}
-      <DataTable
-        columns={columns}
-        rows={filteredClients}
-        getRowKey={(row) => row.id}
-        caption="Listado de clientes"
-        onRowClick={(row) => setSelectedClient(row)}
-        rowClassName={(row) => (!row.is_active ? 'opacity-60' : undefined)}
-        loading={loading}
-        emptyState={
-          <EmptyState
-            title="No se encontraron clientes"
-            description={
-              searchTerm
-                ? 'No hay clientes que coincidan con la búsqueda ingresada.'
-                : 'Añade tu primer cliente para comenzar a registrar actividades.'
-            }
-            action={
-              searchTerm ? (
-                <Button variant="secondary" onClick={() => setSearchTerm('')}>
-                  Limpiar búsqueda
-                </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setClientToEdit(null);
-                    setFormOpen(true);
-                  }}
-                  iconStart={<IconPlus size={16} />}
-                >
-                  Crear Primer Cliente
-                </Button>
-              )
-            }
-            icon={<IconClients size={28} />}
-          />
-        }
-      />
+      <Panel padding="flush">
+        <DataTable
+          columns={columns}
+          rows={filteredClients}
+          getRowKey={(row) => row.id}
+          caption="Listado de clientes"
+          onRowClick={(row) => setSelectedClient(row)}
+          rowClassName={(row) => (!row.is_active ? 'opacity-60' : undefined)}
+          loading={loading}
+          emptyState={
+            <EmptyState
+              title="No se encontraron clientes"
+              description={
+                searchTerm
+                  ? 'No hay clientes que coincidan con la búsqueda ingresada.'
+                  : 'Añade tu primer cliente para comenzar a registrar actividades.'
+              }
+              action={
+                searchTerm ? (
+                  <Button variant="secondary" onClick={() => setSearchTerm('')}>
+                    Limpiar búsqueda
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      setClientToEdit(null);
+                      setFormOpen(true);
+                    }}
+                    iconStart={<IconPlus size={16} />}
+                  >
+                    Crear Primer Cliente
+                  </Button>
+                )
+              }
+              icon={<IconClients size={28} />}
+            />
+          }
+        />
+      </Panel>
 
       {/* Modal Ficha del Cliente */}
       <ClientDetailModal
@@ -271,7 +301,7 @@ export function ClientsView({
         client={selectedClient}
         activities={activities}
         payments={payments}
-        onClientUpdated={loadData}
+        onClientUpdated={handleClientStatusToggled}
         onEditClient={(c) => {
           setSelectedClient(null);
           setClientToEdit(c);
@@ -288,9 +318,7 @@ export function ClientsView({
       <ClientFormDialog
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        onSaved={() => {
-          loadData();
-        }}
+        onSaved={handleClientSaved}
         clientToEdit={clientToEdit}
       />
     </div>

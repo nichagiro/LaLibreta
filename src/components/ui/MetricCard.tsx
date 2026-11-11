@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/theme/cn';
 import { Money, type MoneyTone } from './Money';
+import { Skeleton } from './Skeleton';
 
 export interface MetricCardProps {
   /** Qué mide la cifra, en una frase corta. */
@@ -13,6 +14,8 @@ export interface MetricCardProps {
   detail?: string;
   /** Contenido auxiliar al pie, por ejemplo el desglose de conteos. */
   footer?: ReactNode;
+  /** Indica si la métrica se encuentra actualizándose. */
+  loading?: boolean;
   className?: string;
 }
 
@@ -29,18 +32,25 @@ export function MetricCard({
   tone = 'default',
   detail,
   footer,
+  loading = false,
   className,
 }: MetricCardProps) {
   return (
     <div
       className={cn(
-        'flex flex-col gap-1.5 rounded-lg border border-rule bg-panel p-4 sm:p-5',
+        'flex flex-col gap-1.5 rounded-lg border border-rule bg-panel p-4 sm:p-5 transition-opacity',
         className,
       )}
     >
       <p className="text-xs font-medium text-surface-500">{label}</p>
 
-      <Money value={value} tone={tone} emphasis="display" />
+      {loading ? (
+        <div className="h-8 flex items-center">
+          <Skeleton className="h-7 w-32" />
+        </div>
+      ) : (
+        <Money value={value} tone={tone} emphasis="display" />
+      )}
 
       {detail ? <p className="text-xs leading-snug text-surface-500">{detail}</p> : null}
 

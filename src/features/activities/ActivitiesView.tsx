@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { Panel } from '@/components/ui/Panel';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { Money } from '@/components/ui/Money';
@@ -8,10 +9,12 @@ import { SearchField } from '@/components/ui/TextField';
 import { Select } from '@/components/ui/Select';
 import { DateField } from '@/components/ui/DateField';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Spinner } from '@/components/ui/Spinner';
 import { IconPlus, IconActivities } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { Activity, Category, Client } from '@/types';
 import { formatDateEs } from '@/theme/format';
+import { useRouteLocation, navigateTo, clearRouteDetail } from '@/router';
 import { ACTIVITY_STATUS_ORDER, PAYMENT_STATUS_ORDER } from '@/theme/status';
 import { ActivityDetailModal } from './ActivityDetailModal';
 import { ActivityFormDialog } from './ActivityFormDialog';
@@ -36,10 +39,56 @@ export function ActivitiesView({ initialClientId, onClearInitialClient }: Activi
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  // Modales
+  // Modales y navegación profunda
+  const routeLoc = useRouteLocation();
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [activityToEdit, setActivityToEdit] = useState<Activity | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Sincronizar el estado del modal cuando la ruta, ID o acción cambie en la URL
+  useEffect(() => {
+    if (routeLoc.route !== 'activities') return;
+
+    if (routeLoc.id) {
+      if (routeLoc.action === 'edit') {
+        const found = activities.find((a) => a.id === routeLoc.id);
+        if (found) {
+          setActivityToEdit(found);
+          setFormOpen(true);
+          setSelectedActivityId(null);
+        } else if (!loading) {
+          setActivityToEdit(null);
+          setFormOpen(false);
+        }
+      } else {
+        setSelectedActivityId(routeLoc.id);
+        setFormOpen(false);
+        setActivityToEdit(null);
+      }
+    } else {
+      setSelectedActivityId(null);
+      if (activityToEdit) {
+        setFormOpen(false);
+        setActivityToEdit(null);
+      }
+    }
+  }, [routeLoc.route, routeLoc.id, routeLoc.action, activities, loading, activityToEdit]);
+
+  const handleOpenActivity = (id: string) => {
+    navigateTo('activities', { id });
+  };
+
+  const handleCloseActivity = () => {
+    setSelectedActivityId(null);
+    clearRouteDetail('activities');
+  };
+
+  const handleCloseForm = () => {
+    setFormOpen(false);
+    setActivityToEdit(null);
+    clearRouteDetail('activities');
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -62,6 +111,44 @@ export function ActivitiesView({ initialClientId, onClearInitialClient }: Activi
   useEffect(() => {
     loadData();
   }, []);
+
+  /**
+   * Inserta o reemplaza la actividad con el registro que la API devuelve ya
+   * persistido (con total_received, balance_pending y payment_status
+   * recalculados), evitando recargar actividades + clientes + categorías.
+   */
+  const handleActivitySaved = (saved: Activity) => {
+    setActivities((prev) => {
+      const exists = prev.some((a) => a.id === saved.id);
+      return exists
+        ? prev.map((a) => (a.id === saved.id ? saved : a))
+        : [...prev, saved];
+    });
+    setFormOpen(false);
+    setActivityToEdit(null);
+    clearRouteDetail('activities');
+  };
+
+  /**
+   * Actualización desde el modal de detalle. Con la actividad en mano
+   * (cancelación) se actualiza la fila sin red; en operaciones de pagos el
+   * backend recalcula el saldo, así que solo se refresca el listado, que es
+   * la única fuente afectada (clientes y categorías no cambian).
+   */
+  const applyActivityUpdate = async (updated?: Activity) => {
+    if (updated) {
+      handleActivitySaved(updated);
+      return;
+    }
+    setRefreshing(true);
+    try {
+      setActivities(await api.getActivities());
+    } catch {
+      // Error silencioso, manejado por estado vacío
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (initialClientId) {
@@ -310,71 +397,76 @@ export function ActivitiesView({ initialClientId, onClearInitialClient }: Activi
         </div>
       </PageHeader>
 
+      {refreshing ? (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-100 rounded-md text-xs text-surface-600 border border-rule w-fit">
+          <Spinner size={12} label="Actualizando actividades..." />
+          <span>Actualizando listado…</span>
+        </div>
+      ) : null}
+
       {/* Tabla de Actividades */}
-      <DataTable
-        columns={columns}
-        rows={filteredActivities}
-        getRowKey={(row) => row.id}
-        caption="Listado de actividades y servicios"
-        onRowClick={(row) => setSelectedActivityId(row.id)}
-        rowClassName={(row) => (row.status === 'cancelled' ? 'opacity-65' : undefined)}
-        loading={loading}
-        emptyState={
-          hasActiveFilters ? (
-            <EmptyState
-              title="No hay actividades con los filtros actuales"
-              description="Prueba cambiando los criterios de búsqueda o limpia los filtros."
-              action={
-                <Button variant="secondary" onClick={handleClearFilters}>
-                  Limpiar filtros
-                </Button>
-              }
-              icon={<IconActivities size={28} />}
-            />
-          ) : (
-            <EmptyState
-              title="Aún no tienes actividades registradas"
-              description="Registra tu primer servicio o venta para comenzar a llevar el control."
-              action={
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setActivityToEdit(null);
-                    setFormOpen(true);
-                  }}
-                  iconStart={<IconPlus size={16} />}
-                >
-                  Crear Primera Actividad
-                </Button>
-              }
-              icon={<IconActivities size={28} />}
-            />
-          )
-        }
-      />
+      <Panel padding="flush">
+        <DataTable
+          columns={columns}
+          rows={filteredActivities}
+          getRowKey={(row) => row.id}
+          caption="Listado de actividades y servicios"
+          onRowClick={(row) => handleOpenActivity(row.id)}
+          rowClassName={(row) => (row.status === 'cancelled' ? 'opacity-65' : undefined)}
+          loading={loading}
+          emptyState={
+            hasActiveFilters ? (
+              <EmptyState
+                title="No hay actividades con los filtros actuales"
+                description="Prueba cambiando los criterios de búsqueda o limpia los filtros."
+                action={
+                  <Button variant="secondary" onClick={handleClearFilters}>
+                    Limpiar filtros
+                  </Button>
+                }
+                icon={<IconActivities size={28} />}
+              />
+            ) : (
+              <EmptyState
+                title="Aún no tienes actividades registradas"
+                description="Registra tu primer servicio o venta para comenzar a llevar el control."
+                action={
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      setActivityToEdit(null);
+                      setFormOpen(true);
+                    }}
+                    iconStart={<IconPlus size={16} />}
+                  >
+                    Crear Primera Actividad
+                  </Button>
+                }
+                icon={<IconActivities size={28} />}
+              />
+            )
+          }
+        />
+      </Panel>
 
       {/* Modal de Detalle */}
       <ActivityDetailModal
         open={Boolean(selectedActivityId)}
-        onClose={() => setSelectedActivityId(null)}
+        onClose={handleCloseActivity}
         activityId={selectedActivityId}
         clients={clients}
         categories={categories}
-        onActivityUpdated={loadData}
+        onActivityUpdated={applyActivityUpdate}
         onEditActivity={(act) => {
-          setSelectedActivityId(null);
-          setActivityToEdit(act);
-          setFormOpen(true);
+          navigateTo('activities', { id: act.id, action: 'edit' });
         }}
       />
 
       {/* Modal de Formulario (Crear/Editar) */}
       <ActivityFormDialog
         open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onSaved={() => {
-          loadData();
-        }}
+        onClose={handleCloseForm}
+        onSaved={handleActivitySaved}
         activityToEdit={activityToEdit}
         preselectedClientId={selectedClientId !== 'all' ? selectedClientId : null}
         clients={clients}

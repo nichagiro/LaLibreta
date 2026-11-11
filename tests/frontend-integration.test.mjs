@@ -5,6 +5,8 @@ import { mockAdapter } from '../src/services/mock-adapter.ts';
 import { buildActivityPdf } from '../src/features/pdf/generatePdf.ts';
 import { sheetsApi } from '../src/services/sheets-api.ts';
 import { api } from '../src/services/api.ts';
+import { normalizeDate, formatDateEs, formatDateLongEs } from '../src/theme/format.ts';
+import { routeFromHash, parseHash } from '../src/router.ts';
 
 test('1. Flujo de Clientes: creación, consulta y desactivación lógica', async () => {
   mockAdapter.resetData();
@@ -309,5 +311,211 @@ test('9. Reintentos: reenvío idéntico conservando la clave de idempotencia', a
     assert.equal(calls.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('10. Formato y normalización de fechas: soporte de formato completo de Google Sheets', () => {
+  const sheetsDateStr = 'Sun Feb 08 2026 00:00:00 GMT-0500 (hora estándar de Colombia)';
+
+  // normalizeDate convierte a YYYY-MM-DD
+  assert.equal(normalizeDate(sheetsDateStr), '2026-02-08');
+  assert.equal(normalizeDate('2026-02-08'), '2026-02-08');
+  assert.equal(normalizeDate('2026-02-08T00:00:00.000Z'), '2026-02-08');
+
+  // formatDateEs formatea correctamente la cadena devuelta por Sheets
+  const formatted = formatDateEs(sheetsDateStr);
+  assert.ok(formatted.includes('8') && formatted.includes('feb') && formatted.includes('2026'));
+
+  // formatDateLongEs
+  const longFormatted = formatDateLongEs(sheetsDateStr);
+  assert.ok(longFormatted.includes('8') && longFormatted.includes('febrero') && longFormatted.includes('2026'));
+});
+
+test('10b. Normalización de fechas: formatos numéricos y de hoja', () => {
+  // Formato numérico de hoja: mes/día/año.
+  assert.equal(normalizeDate('11/08/2026'), '2026-11-08');
+  // Con día > 12 no hay ambigüedad: es día/mes/año.
+  assert.equal(normalizeDate('25/10/2026'), '2026-10-25');
+  // Año/mes/día con separadores distintos.
+  assert.equal(normalizeDate('2026/11/08'), '2026-11-08');
+  // ISO con espacio en vez de "T".
+  assert.equal(normalizeDate('2026-11-08 00:00:00'), '2026-11-08');
+  // Nombres de mes sueltos.
+  assert.equal(normalizeDate('Nov 08 2026'), '2026-11-08');
+  assert.equal(normalizeDate('08 Nov 2026'), '2026-11-08');
+});
+
+test('11. Creación de actividad y registro de pago inmediato automático', async () => {
+  mockAdapter.resetData();
+
+  const clients = await mockAdapter.getClients();
+  const client = clients.find((c) => c.is_active);
+  assert.ok(client);
+  const categories = await mockAdapter.getCategories();
+  const category = categories.find((c) => c.is_active);
+  assert.ok(category);
+
+  // Crear actividad
+  const act = await mockAdapter.createActivity({
+    client_id: client.id,
+    type: 'service',
+    category_id: category.id,
+    title: 'Mantenimiento de servidor y migración',
+    activity_date: '2026-11-09',
+    total_value: 450000,
+  });
+
+  assert.equal(act.total_value, 450000);
+  assert.equal(act.payment_status, 'pending');
+  assert.equal(act.balance_pending, 450000);
+
+  // Registrar pago inmediato por el total
+  const payment = await mockAdapter.addPayment({
+    activity_id: act.id,
+    payment_date: '2026-11-09',
+    amount: act.total_value,
+    payment_method: 'transferencia_bancaria',
+    notes: 'Pago recibido al momento de la creación',
+  });
+
+  assert.ok(payment.id.startsWith('pay_'));
+  assert.equal(payment.amount, 450000);
+
+  // Comprobar que en getActivities el saldo se calcula autoritativamente como pagado
+  const acts = await mockAdapter.getActivities();
+  const updatedAct = acts.find((a) => a.id === act.id);
+  assert.ok(updatedAct);
+  assert.equal(updatedAct.total_received, 450000);
+  assert.equal(updatedAct.balance_pending, 0);
+  assert.equal(updatedAct.payment_status, 'paid');
+});
+
+test('12. Selectores sin valor asignado: el backend rechaza valores no elegidos', async () => {
+  mockAdapter.resetData();
+
+  const clients = await mockAdapter.getClients();
+  const client = clients.find((c) => c.is_active);
+  assert.ok(client);
+  const categories = await mockAdapter.getCategories();
+  const category = categories.find((c) => c.is_active);
+  assert.ok(category);
+
+  // Un estado vacío no puede llegar a la base de datos.
+  await assert.rejects(
+    () =>
+      mockAdapter.createActivity({
+        client_id: client.id,
+        type: 'service',
+        category_id: category.id,
+        title: 'Actividad sin estado asignado',
+        activity_date: '2026-11-10',
+        total_value: 120000,
+        status: '',
+      }),
+    (err) => {
+      assert.equal(err.code, 'VALIDATION_ERROR');
+      return true;
+    }
+  );
+
+  // Un método de pago vacío tampoco.
+  const act = await mockAdapter.createActivity({
+    client_id: client.id,
+    type: 'service',
+    category_id: category.id,
+    title: 'Actividad con estado válido',
+    activity_date: '2026-11-10',
+    total_value: 120000,
+    status: 'pending',
+  });
+
+  await assert.rejects(
+    () =>
+      mockAdapter.addPayment({
+        activity_id: act.id,
+        payment_date: '2026-11-10',
+        amount: 120000,
+        payment_method: '',
+      }),
+    (err) => {
+      assert.equal(err.code, 'VALIDATION_ERROR');
+      return true;
+    }
+  );
+
+  // Con el método elegido, el abono sí se registra.
+  const payment = await mockAdapter.addPayment({
+    activity_id: act.id,
+    payment_date: '2026-11-10',
+    amount: 120000,
+    payment_method: 'efectivo',
+  });
+  assert.equal(payment.amount, 120000);
+  assert.equal(payment.payment_method, 'efectivo');
+});
+
+test('13. Enrutamiento y Deep Linking: resolución de rutas con parámetros en ruta y query string', () => {
+  assert.equal(routeFromHash('#/actividades?id=act_90caf568'), 'activities');
+  assert.equal(routeFromHash('#/actividades'), 'activities');
+  assert.equal(routeFromHash('#/actividades/act_90caf568'), 'activities');
+  assert.equal(routeFromHash('#/actividades/act_90caf568/editar'), 'activities');
+  assert.equal(routeFromHash('#/activities?ref=123'), 'activities');
+  assert.equal(routeFromHash('#/clientes?search=maria'), 'clients');
+  assert.equal(routeFromHash('#/inicio?from=2026-11-01'), 'dashboard');
+  assert.equal(routeFromHash(''), 'dashboard');
+
+  // Pruebas de parseHash para rutas canónicas segmentadas
+  const parsedDetail = parseHash('#/actividades/act_90caf568');
+  assert.equal(parsedDetail.route, 'activities');
+  assert.equal(parsedDetail.id, 'act_90caf568');
+  assert.equal(parsedDetail.action, null);
+
+  const parsedEdit = parseHash('#/actividades/act_90caf568/editar');
+  assert.equal(parsedEdit.route, 'activities');
+  assert.equal(parsedEdit.id, 'act_90caf568');
+  assert.equal(parsedEdit.action, 'edit');
+
+  // Retrocompatibilidad con query string
+  const parsedQuery = parseHash('#/actividades?id=act_12345&action=edit');
+  assert.equal(parsedQuery.route, 'activities');
+  assert.equal(parsedQuery.id, 'act_12345');
+  assert.equal(parsedQuery.action, 'edit');
+});
+
+test('14. Caché en memoria nativa en ApiService: lectura rápida e invalidación por mutación', async () => {
+  api.setMockMode(true);
+  try {
+    api.resetMockData();
+
+    // Primera consulta: llena la caché
+    const initial = await api.getActivities();
+    assert.ok(Array.isArray(initial));
+
+    // Segunda consulta: debe retornar la misma referencia en memoria (0 ms)
+    const cached = await api.getActivities();
+    assert.equal(cached, initial);
+
+    // Consulta forzada con forceRefresh: omite la caché y devuelve nueva referencia
+    const forced = await api.getActivities({ forceRefresh: true });
+    assert.notEqual(forced, initial);
+
+    // Mutación: crear una nueva actividad invalida automáticamente la caché
+    const clients = await api.getClients();
+    const categories = await api.getCategories();
+    const created = await api.createActivity({
+      client_id: clients[0].id,
+      category_id: categories[0].id,
+      type: 'service',
+      title: 'Actividad para probar invalidación de caché',
+      activity_date: '2026-11-15',
+      total_value: 300000,
+    });
+
+    // La siguiente consulta debe retornar los datos frescos incluyendo la nueva actividad
+    const afterMutation = await api.getActivities();
+    assert.notEqual(afterMutation, initial);
+    assert.ok(afterMutation.some((a) => a.id === created.id));
+  } finally {
+    api.setMockMode(false);
   }
 });

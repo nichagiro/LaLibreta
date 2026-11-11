@@ -17,7 +17,7 @@ export interface ClientDetailModalProps {
   client: Client | null;
   activities: Activity[];
   payments: Payment[];
-  onClientUpdated: () => void;
+  onClientUpdated: (client: Client) => void;
   onEditClient: (client: Client) => void;
   onCreateActivityForClient: (clientId: string) => void;
   onSelectActivity: (activityId: string) => void;
@@ -71,9 +71,9 @@ export function ClientDetailModal({
     setToggling(true);
     setError(null);
     try {
-      await api.toggleClientStatus(client.id, !client.is_active);
+      const result = await api.toggleClientStatus(client.id, !client.is_active);
       setToggleConfirmOpen(false);
-      onClientUpdated();
+      onClientUpdated({ ...client, is_active: result.is_active });
     } catch (err: unknown) {
       setError((err as Error)?.message || 'No fue posible actualizar el estado del cliente.');
     } finally {
@@ -214,7 +214,7 @@ export function ClientDetailModal({
             ) : (
               <div className="border border-rule rounded-lg overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-surface-50 border-b border-rule text-surface-500 text-[11px]">
+                  <thead className="bg-ink border-b border-ink text-white text-[11px] font-semibold">
                     <tr>
                       <th className="py-2 px-3">Actividad</th>
                       <th className="py-2 px-3">Fecha</th>
@@ -280,7 +280,7 @@ export function ClientDetailModal({
             ) : (
               <div className="border border-rule rounded-lg overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-surface-50 border-b border-rule text-surface-500 text-[11px]">
+                  <thead className="bg-ink border-b border-ink text-white text-[11px] font-semibold">
                     <tr>
                       <th className="py-2 px-3">Fecha</th>
                       <th className="py-2 px-3">Método</th>

@@ -23,7 +23,10 @@ export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
   error?: string;
   /** Opciones simples. Si se omiten, se usan los `children`. */
   options?: readonly SelectOption[];
-  /** Opción vacía inicial. Imprescindible en selectores obligatorios. */
+  /**
+   * Opción de entrada con valor vacío. Impide que el navegador deje
+   * preseleccionada la primera opción real.
+   */
   placeholder?: string;
   containerClassName?: string;
 }
@@ -34,6 +37,12 @@ export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
  * Se mantiene el `<select>` del sistema en lugar de un listado personalizado:
  * en iOS y Android abre el picker nativo, que es más rápido y accesible que
  * cualquier alternativa construida a mano.
+ *
+ * Cuando hay `placeholder`, el campo es obligatorio de verdad pero la
+ * validación la hace el formulario (mensajes en español): el `required`
+ * nativo se desactiva porque el navegador lo intercepta con un mensaje
+ * propio y sin traducción. `aria-required` conserva la semántica para los
+ * lectores de pantalla.
  */
 export function Select({
   label,
@@ -46,12 +55,19 @@ export function Select({
   id,
   required,
   disabled,
+  value,
+  defaultValue,
   children,
   ...rest
 }: SelectProps) {
   const generatedId = useId();
   const fieldId = id ?? generatedId;
   const hasError = Boolean(error);
+  const hasPlaceholder = placeholder !== undefined;
+  // Valor mostrado: controlado (`value`) o el inicial de un selector no controlado.
+  const currentValue = value !== undefined ? value : defaultValue;
+  // Con opción de entrada, el valor vacío es un estado legítimo del control.
+  const showPlaceholderValue = hasPlaceholder && (currentValue === undefined || currentValue === '');
 
   return (
     <Field
@@ -65,7 +81,8 @@ export function Select({
       <div className="relative">
         <select
           id={fieldId}
-          required={required}
+          required={required === true && !hasPlaceholder}
+          aria-required={required === true || undefined}
           disabled={disabled}
           aria-invalid={hasError || undefined}
           aria-describedby={fieldDescribedBy(fieldId, hint, error)}
@@ -73,12 +90,15 @@ export function Select({
             controlBase,
             controlIdle,
             hasError && controlInvalid,
+            // La opción de entrada se muestra atenuada mientras siga activa.
+            showPlaceholderValue && 'text-surface-500',
             'h-11 cursor-pointer appearance-none pl-3.5 pr-10 text-base md:text-sm',
             className,
           )}
+          {...(value !== undefined ? { value } : { defaultValue })}
           {...rest}
         >
-          {placeholder !== undefined ? <option value="">{placeholder}</option> : null}
+          {hasPlaceholder ? <option value="">{placeholder}</option> : null}
           {options
             ? options.map((option) => (
                 <option key={option.value} value={option.value} disabled={option.disabled}>

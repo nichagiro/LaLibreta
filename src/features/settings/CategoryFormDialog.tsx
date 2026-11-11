@@ -6,10 +6,13 @@ import { Alert } from '@/components/ui/Alert';
 import { api } from '@/services/api';
 import type { Category } from '@/types';
 
+/** Distingue una creación de una actualización para el mensaje de confirmación. */
+export type CategorySaveMode = 'create' | 'update';
+
 export interface CategoryFormDialogProps {
   open: boolean;
   onClose: () => void;
-  onSaved: (category: Category) => void;
+  onSaved: (category: Category, mode: CategorySaveMode) => void;
   categoryToEdit?: Category | null;
 }
 
@@ -47,11 +50,11 @@ export function CategoryFormDialog({
     try {
       if (isEditing && categoryToEdit) {
         const updated = await api.updateCategory(categoryToEdit.id, name.trim());
-        onSaved(updated);
+        onSaved(updated, 'update');
         onClose();
       } else {
         const created = await api.createCategory(name.trim());
-        onSaved(created);
+        onSaved(created, 'create');
         onClose();
       }
     } catch (err: unknown) {

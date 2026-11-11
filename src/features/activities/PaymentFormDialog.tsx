@@ -9,7 +9,9 @@ import { Alert } from '@/components/ui/Alert';
 import { api } from '@/services/api';
 import type { Activity, Payment, PaymentMethod } from '@/types';
 import { formatCop } from '@/theme/format';
+import { cn } from '@/theme/cn';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_ORDER } from '@/theme/status';
+import { SELECT_PLACEHOLDERS } from '@/theme/select';
 
 export interface PaymentFormDialogProps {
   open: boolean;
@@ -26,7 +28,7 @@ export function PaymentFormDialog({
 }: PaymentFormDialogProps) {
   const [amount, setAmount] = useState<number | null>(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('transferencia_bancaria');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +40,8 @@ export function PaymentFormDialog({
     setError(null);
     setAmount(pendingBalance > 0 ? pendingBalance : null);
     setPaymentDate(new Date().toISOString().split('T')[0]);
-    setPaymentMethod('transferencia_bancaria');
+    // Sin método preseleccionado: el abono se registra solo si el usuario elige uno.
+    setPaymentMethod('');
     setNotes('');
   }, [open, pendingBalance]);
 
@@ -64,6 +67,11 @@ export function PaymentFormDialog({
 
     if (!paymentDate) {
       setError('La fecha de pago es obligatoria.');
+      return;
+    }
+
+    if (!paymentMethod) {
+      setError('Debes seleccionar un método de pago.');
       return;
     }
 
@@ -159,23 +167,84 @@ export function PaymentFormDialog({
             hint="Día en que entró el dinero"
           />
 
-          <Select
-            label="Método de pago"
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-            options={methodOptions}
-            required
-          />
+          <div>
+            <Select
+              label="Método de pago / Comprobante"
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod | '')}
+              options={methodOptions}
+              placeholder={SELECT_PLACEHOLDERS.metodoPago}
+              required
+              hint="Efectivo, transferencia o billetera"
+            />
+          </div>
         </div>
 
-        {/* Comprobante / Nota opcional */}
-        <TextField
-          label="Comprobante o referencia (opcional)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Ej: Transferencia #84920, Efectivo en mano, etc."
-          hint="Detalle visible en el historial y en el comprobante PDF."
-        />
+        {/* Acceso rápido de un clic */}
+        <div className="space-y-1.5">
+          <span className="block text-[11px] font-medium text-surface-500">
+            Selección rápida de método:
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {methodOptions.map((opt) => {
+              const isSelected = paymentMethod === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(opt.value as PaymentMethod)}
+                  className={cn(
+                    'text-xs px-2.5 py-1 rounded border transition-colors cursor-pointer',
+                    isSelected
+                      ? 'bg-ink text-white border-ink font-semibold'
+                      : 'bg-white text-surface-700 border-rule hover:border-surface-400 hover:bg-surface-50'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Comprobante / Nota opcional adaptada según el método */}
+        {paymentMethod === '' ? (
+          <p className="text-[11px] text-surface-500">
+            Elige un método de pago para indicar el comprobante del abono.
+          </p>
+        ) : paymentMethod === 'efectivo' ? (
+          <TextField
+            label="Nota o detalle (opcional)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Opcional: ej. Recibido en efectivo (puedes dejarlo vacío)"
+            hint="Los pagos en efectivo no requieren número de comprobante."
+          />
+        ) : paymentMethod === 'transferencia_bancaria' ? (
+          <TextField
+            label="Número de comprobante / transferencia (opcional)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Ej: #84920, Transferencia Bancolombia, etc."
+            hint="Código o soporte bancario para conciliar la transferencia."
+          />
+        ) : paymentMethod === 'nequi' || paymentMethod === 'daviplata' ? (
+          <TextField
+            label={`Comprobante de ${paymentMethod === 'nequi' ? 'Nequi' : 'Daviplata'} (opcional)`}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Ej: M049281 o código de confirmación"
+            hint="Código de confirmación de la billetera digital (opcional)."
+          />
+        ) : (
+          <TextField
+            label="Comprobante o referencia (opcional)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Ej: Voucher #1234, soporte físico, etc."
+            hint="Detalle visible en el historial y en el comprobante PDF."
+          />
+        )}
       </form>
     </Dialog>
   );

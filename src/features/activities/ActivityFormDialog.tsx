@@ -7,9 +7,13 @@ import { DateField } from '@/components/ui/DateField';
 import { Select } from '@/components/ui/Select';
 import { MoneyField } from '@/components/ui/MoneyField';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Switch } from '@/components/ui/Switch';
 import { Alert } from '@/components/ui/Alert';
 import { api } from '@/services/api';
-import type { Activity, ActivityType, ActivityStatus, Category, Client } from '@/types';
+import type { Activity, ActivityType, ActivityStatus, Category, Client, PaymentMethod } from '@/types';
+import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_ORDER } from '@/theme/status';
+import { SELECT_PLACEHOLDERS } from '@/theme/select';
+import { cn } from '@/theme/cn';
 
 export interface ActivityFormDialogProps {
   open: boolean;
@@ -39,9 +43,15 @@ export function ActivityFormDialog({
   const [description, setDescription] = useState('');
   const [activityDate, setActivityDate] = useState(new Date().toISOString().split('T')[0]);
   const [totalValue, setTotalValue] = useState<number | null>(null);
-  const [status, setStatus] = useState<ActivityStatus>('pending');
+  const [status, setStatus] = useState<ActivityStatus | ''>('');
   const [publicNotes, setPublicNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+
+  // Marcar automáticamente paga al momento de la creación
+  const [isPaidImmediately, setIsPaidImmediately] = useState(false);
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
+  const [paymentNotes, setPaymentNotes] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,19 +74,37 @@ export function ActivityFormDialog({
       setStatus(activityToEdit.status);
       setPublicNotes(activityToEdit.public_notes || '');
       setInternalNotes(activityToEdit.internal_notes || '');
+      setIsPaidImmediately(false);
+      setPaymentMethod('');
+      setPaymentNotes('');
     } else {
+      const today = new Date().toISOString().split('T')[0];
       setType('service');
-      setClientId(preselectedClientId || (clients[0]?.id ?? ''));
-      setCategoryId(categories.find((c) => c.is_active)?.id ?? (categories[0]?.id ?? ''));
+      // Sin preselección: el usuario debe elegir cliente y categoría a propósito.
+      // El cliente preseleccionado desde la ficha del cliente sí se respeta.
+      setClientId(preselectedClientId || '');
+      setCategoryId('');
       setTitle('');
       setDescription('');
-      setActivityDate(new Date().toISOString().split('T')[0]);
+      setActivityDate(today);
       setTotalValue(null);
-      setStatus('pending');
+      setStatus('');
       setPublicNotes('');
       setInternalNotes('');
+      setIsPaidImmediately(false);
+      setPaymentDate(today);
+      setPaymentMethod('');
+      setPaymentNotes('');
     }
-  }, [open, activityToEdit, preselectedClientId, clients, categories]);
+  }, [open, activityToEdit, preselectedClientId]);
+
+  const handleActivityDateChange = (newDate: string) => {
+    // Si la fecha de pago coincidía con la fecha anterior de la actividad, sincronizar
+    if (paymentDate === activityDate) {
+      setPaymentDate(newDate);
+    }
+    setActivityDate(newDate);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -88,6 +116,10 @@ export function ActivityFormDialog({
     }
     if (!categoryId) {
       setError('Debes seleccionar una categoría.');
+      return;
+    }
+    if (!status) {
+      setError('Debes seleccionar el estado operativo del trabajo.');
       return;
     }
     if (!title.trim()) {
@@ -102,6 +134,21 @@ export function ActivityFormDialog({
       setError('Debes especificar un valor total válido en COP enteros.');
       return;
     }
+
+    if (!isEditing && isPaidImmediately) {
+      if (!paymentDate) {
+        setError('La fecha del pago es obligatoria.');
+        return;
+      }
+      if (!paymentMethod) {
+        setError('Debes seleccionar un método de pago.');
+        return;
+      }
+    }
+
+    // El método solo se usa cuando además hay un valor total a cobrar.
+    const methodForPayment: PaymentMethod | null =
+      isPaidImmediately && totalValue > 0 ? paymentMethod || null : null;
 
     setSaving(true);
     try {
@@ -132,8 +179,35 @@ export function ActivityFormDialog({
           public_notes: publicNotes.trim(),
           internal_notes: internalNotes.trim(),
         });
-        onSaved(created);
-        onClose();
+
+        if (isPaidImmediately && totalValue > 0 && methodForPayment) {
+          try {
+            await api.addPayment({
+              activity_id: created.id,
+              payment_date: paymentDate,
+              amount: totalValue,
+              payment_method: methodForPayment,
+              notes: paymentNotes.trim(),
+            });
+            onSaved({
+              ...created,
+              total_received: totalValue,
+              balance_pending: 0,
+              payment_status: 'paid',
+            });
+            onClose();
+          } catch (payErr: unknown) {
+            onSaved(created);
+            setError(
+              `La actividad fue creada, pero no se pudo registrar el pago automático: ${
+                (payErr as Error)?.message || 'Error desconocido'
+              }. Puedes registrar el abono manualmente desde el detalle de la actividad.`
+            );
+          }
+        } else {
+          onSaved(created);
+          onClose();
+        }
       }
     } catch (err: unknown) {
       setError((err as Error)?.message || 'No fue posible guardar la actividad.');
@@ -155,6 +229,11 @@ export function ActivityFormDialog({
       value: c.id,
       label: `${c.name}${!c.is_active ? ' (Desactivada)' : ''}`,
     }));
+
+  const paymentMethodOptions = PAYMENT_METHOD_ORDER.map((methodKey) => ({
+    value: methodKey,
+    label: PAYMENT_METHOD_LABELS[methodKey],
+  }));
 
   return (
     <Dialog
@@ -209,6 +288,7 @@ export function ActivityFormDialog({
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
             options={clientOptions}
+            placeholder={SELECT_PLACEHOLDERS.cliente}
             required
             hint="Titular al que se le realiza el cobro"
           />
@@ -218,6 +298,7 @@ export function ActivityFormDialog({
             value={categoryId}
             onChange={(e) => setCategoryId(e.target.value)}
             options={categoryOptions}
+            placeholder={SELECT_PLACEHOLDERS.categoria}
             required
             hint="Clasificación operativa"
           />
@@ -248,7 +329,7 @@ export function ActivityFormDialog({
           <DateField
             label="Fecha de la actividad"
             value={activityDate}
-            onChange={(e) => setActivityDate(e.target.value)}
+            onChange={(e) => handleActivityDateChange(e.target.value)}
             required
           />
 
@@ -274,14 +355,121 @@ export function ActivityFormDialog({
           <Select
             label="Estado operativo del trabajo"
             value={status}
-            onChange={(e) => setStatus(e.target.value as ActivityStatus)}
+            onChange={(e) => setStatus(e.target.value as ActivityStatus | '')}
             options={[
               { value: 'pending', label: 'Pendiente' },
               { value: 'in_progress', label: 'En proceso' },
               { value: 'completed', label: 'Finalizada' },
             ]}
+            placeholder={SELECT_PLACEHOLDERS.estado}
+            required
+            hint="En qué punto del trabajo queda la actividad"
           />
         </div>
+
+        {/* Pago automático al momento de la creación */}
+        {!isEditing && (
+          <div className="border-t border-rule pt-4 space-y-3">
+            <Switch
+              label="Marcar como pagada de inmediato"
+              description="Registra automáticamente un pago por el valor total acordado al guardar."
+              checked={isPaidImmediately}
+              onChange={setIsPaidImmediately}
+            />
+
+            {isPaidImmediately && (
+              <div className="bg-surface-50 p-3.5 rounded-lg border border-rule space-y-3 mt-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <DateField
+                    label="Fecha del ingreso"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    required
+                    hint="Día en que entró el dinero"
+                  />
+
+                  <div>
+                    <Select
+                      label="Método de pago / Comprobante"
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod | '')}
+                      options={paymentMethodOptions}
+                      placeholder={SELECT_PLACEHOLDERS.metodoPago}
+                      required
+                      hint="Efectivo, transferencia o billetera"
+                    />
+                  </div>
+                </div>
+
+                {/* Acceso rápido de un clic */}
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] font-medium text-surface-500">
+                    Selección rápida de método:
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {paymentMethodOptions.map((opt) => {
+                      const isSelected = paymentMethod === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setPaymentMethod(opt.value as PaymentMethod)}
+                          className={cn(
+                            'text-xs px-2.5 py-1 rounded border transition-colors cursor-pointer',
+                            isSelected
+                              ? 'bg-ink text-white border-ink font-semibold'
+                              : 'bg-white text-surface-700 border-rule hover:border-surface-400 hover:bg-surface-50'
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Comprobante adaptado según el método */}
+                {paymentMethod === '' ? (
+                  <p className="text-[11px] text-surface-500">
+                    Elige un método de pago para indicar el comprobante del abono.
+                  </p>
+                ) : paymentMethod === 'efectivo' ? (
+                  <TextField
+                    label="Nota o detalle (opcional)"
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Opcional: ej. Recibido en efectivo (puedes dejarlo vacío)"
+                    hint="Los pagos en efectivo no requieren número de comprobante."
+                  />
+                ) : paymentMethod === 'transferencia_bancaria' ? (
+                  <TextField
+                    label="Número de comprobante / transferencia (opcional)"
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Ej: #84920, Transferencia Bancolombia, etc."
+                    hint="Código o soporte bancario para conciliar la transferencia."
+                  />
+                ) : paymentMethod === 'nequi' || paymentMethod === 'daviplata' ? (
+                  <TextField
+                    label={`Comprobante de ${paymentMethod === 'nequi' ? 'Nequi' : 'Daviplata'} (opcional)`}
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Ej: M049281 o código de confirmación"
+                    hint="Código de confirmación de la billetera digital (opcional)."
+                  />
+                ) : (
+                  <TextField
+                    label="Comprobante o referencia (opcional)"
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Ej: Voucher #1234, soporte físico, etc."
+                    hint="Detalle visible en el historial y en el comprobante PDF."
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Observaciones públicas vs Notas internas */}
         <div className="border-t border-rule pt-4 space-y-4">

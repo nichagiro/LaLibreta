@@ -9,10 +9,10 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { IconPlus, IconPencil } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { AppConfig, Category } from '@/types';
-import { CategoryFormDialog } from './CategoryFormDialog';
+import { CategoryFormDialog, type CategorySaveMode } from './CategoryFormDialog';
 
 export function SettingsView() {
-  const [activeTab, setActiveTab] = useState<'profile' | 'categories' | 'backend'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'categories'>('profile');
 
   // Configuración del propietario
   const [config, setConfig] = useState<AppConfig>({
@@ -33,18 +33,19 @@ export function SettingsView() {
   const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null);
   const [catToToggle, setCatToToggle] = useState<Category | null>(null);
   const [togglingCat, setTogglingCat] = useState(false);
-
-  // Conectividad Backend (modo fijo según VITE_DATA_SOURCE, sin detección en runtime)
-  const isMock = api.isMockMode();
-  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [catNotice, setCatNotice] = useState<{ title: string; detail: string } | null>(null);
 
   const loadSettings = async () => {
+    setLoadingSettings(true);
     try {
       const [cfg, cats] = await Promise.all([api.getConfig(), api.getCategories()]);
       setConfig(cfg);
       setCategories(cats);
     } catch {
       // Ignorar
+    } finally {
+      setLoadingSettings(false);
     }
   };
 
@@ -77,13 +78,54 @@ export function SettingsView() {
     }
   };
 
+  const showCategoryNotice = (title: string, detail: string) => {
+    const notice = { title, detail };
+    setCatNotice(notice);
+    window.setTimeout(
+      () => setCatNotice((current) => (current === notice ? null : current)),
+      4000
+    );
+  };
+
+  /**
+   * Actualiza el listado local con el registro ya persistido: evita recargar
+   * configuración + categorías tras cada guardado.
+   */
+  const handleCategorySaved = (saved: Category, mode: CategorySaveMode) => {
+    setCategories((prev) => {
+      const exists = prev.some((c) => c.id === saved.id);
+      return exists
+        ? prev.map((c) => (c.id === saved.id ? saved : c))
+        : [...prev, saved];
+    });
+    showCategoryNotice(
+      mode === 'create' ? 'Categoría Creada' : 'Categoría Actualizada',
+      mode === 'create'
+        ? `«${saved.name}» ya está disponible en la lista.`
+        : `«${saved.name}» se guardó correctamente.`
+    );
+  };
+
   const handleToggleCategory = async () => {
     if (!catToToggle) return;
     setTogglingCat(true);
     try {
-      await api.toggleCategoryStatus(catToToggle.id, !catToToggle.is_active);
+      const result = await api.toggleCategoryStatus(
+        catToToggle.id,
+        !catToToggle.is_active
+      );
+      setCategories((prev) =>
+        prev.map((c) =>
+          c.id === result.id ? { ...c, is_active: result.is_active } : c
+        )
+      );
       setCatToToggle(null);
-      await loadSettings();
+      showCategoryNotice(
+        result.is_active ? 'Categoría Activada' : 'Categoría Desactivada',
+        result.is_active
+          ? `«${catToToggle.name}» vuelve a estar disponible para clasificar actividades.`
+          : `«${catToToggle.name}» ya no aparece en el selector de nuevas actividades.`
+      );
     } catch {
       // Manejar
     } finally {
@@ -91,30 +133,23 @@ export function SettingsView() {
     }
   };
 
-  const handleResetDemoData = () => {
-    api.resetMockData();
-    loadSettings();
-    setResetMessage('Datos en memoria reiniciados a los valores de muestra originales.');
-  };
-
   const tabsItems = [
     { key: 'profile', label: 'Datos del Emisor y PDF' },
     { key: 'categories', label: `Categorías (${categories.length})` },
-    { key: 'backend', label: 'Persistencia y Conectividad' },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Configuración"
-        description="Datos del trabajador independiente, instrucciones de pago, categorías y conectividad."
+        description="Datos del trabajador independiente, instrucciones de pago y categorías."
       />
 
       <div className="bg-white border border-rule rounded-lg p-4 sm:p-6 space-y-6">
         <Tabs
           items={tabsItems}
           value={activeTab}
-          onChange={(key) => setActiveTab(key as 'profile' | 'categories' | 'backend')}
+          onChange={(key) => setActiveTab(key as 'profile' | 'categories')}
           label="Secciones de configuración"
         />
 
@@ -223,9 +258,20 @@ export function SettingsView() {
               </Button>
             </div>
 
+            {catNotice ? (
+              <Alert variant="success" title={catNotice.title}>
+                {catNotice.detail}
+              </Alert>
+            ) : null}
+
+            {loadingSettings ? (
+              <div className="border border-rule rounded-lg p-6 text-center text-xs text-surface-500">
+                Cargando categorías…
+              </div>
+            ) : (
             <div className="border border-rule rounded-lg overflow-hidden">
               <table className="w-full text-left text-xs">
-                <thead className="bg-surface-50 border-b border-rule text-surface-500 text-[11px]">
+                <thead className="bg-ink border-b border-ink text-white text-[11px] font-semibold">
                   <tr>
                     <th className="py-2.5 px-3">Nombre</th>
                     <th className="py-2.5 px-3">Estado</th>
@@ -272,72 +318,7 @@ export function SettingsView() {
                 </tbody>
               </table>
             </div>
-          </div>
-        ) : null}
-
-        {/* ------------------------------------------
-            Pestaña 3: Persistencia y Conectividad
-        ------------------------------------------ */}
-        {activeTab === 'backend' ? (
-          <div className="space-y-6 max-w-2xl">
-            <div className="p-4 rounded-lg border border-rule bg-surface-50 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-surface-600 uppercase tracking-wider">
-                  Modo de Persistencia Activo
-                </span>
-                <span
-                  className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                    isMock
-                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                      : 'bg-received-tint text-received border border-received'
-                  }`}
-                >
-                  {isMock
-                    ? 'Modo de Prueba (Adaptador en Memoria)'
-                    : 'Google Apps Script (Producción)'}
-                </span>
-              </div>
-
-              <p className="text-xs text-surface-600 leading-relaxed">
-                {isMock
-                  ? 'Estás usando el Adaptador en Memoria con los datos de muestra de «La Libreta» porque VITE_DATA_SOURCE=mock. Los cambios se mantienen mientras no recargues la página y no se persisten en Google Sheets.'
-                  : 'Conexión directa con tu Web App privada de Google Apps Script (VITE_DATA_SOURCE=sheets). Las escrituras se guardan directamente en las pestañas de tu Google Spreadsheet y no hay conmutación a modo de prueba.'}
-              </p>
-
-              <div className="pt-2 flex flex-wrap items-center gap-3">
-                {isMock ? (
-                  <Button variant="ghost" size="sm" onClick={handleResetDemoData}>
-                    Restablecer Datos de Muestra
-                  </Button>
-                ) : null}
-              </div>
-
-              {resetMessage ? (
-                <div className="mt-3 p-3 rounded text-xs border bg-received-tint border-received text-received">
-                  <strong>Datos reiniciados:</strong> {resetMessage}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="space-y-3 text-xs text-surface-600">
-              <h4 className="font-semibold text-surface-800 text-sm">
-                Arquitectura de Persistencia Indirecta
-              </h4>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>
-                  El frontend estático nunca accede de forma directa a la hoja de cálculo ni almacena
-                  credenciales de Google Cloud Console.
-                </li>
-                <li>
-                  Toda consulta o registro pasa por el manejador <code>doPost</code> del Google Apps
-                  Script con token de acceso personal.
-                </li>
-                <li>
-                  Las actividades canceladas conservan sus pagos en histórico y su saldo pendiente
-                  queda en $ 0 COP de forma autoritativa.
-                </li>
-              </ul>
-            </div>
+            )}
           </div>
         ) : null}
       </div>
@@ -346,7 +327,7 @@ export function SettingsView() {
       <CategoryFormDialog
         open={categoryFormOpen}
         onClose={() => setCategoryFormOpen(false)}
-        onSaved={loadSettings}
+        onSaved={handleCategorySaved}
         categoryToEdit={categoryToEdit}
       />
 

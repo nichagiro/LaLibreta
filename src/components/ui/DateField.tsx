@@ -51,6 +51,7 @@ export function DateField({
       <input
         id={fieldId}
         type="date"
+        lang="es-CO"
         required={required}
         disabled={disabled}
         aria-invalid={hasError || undefined}

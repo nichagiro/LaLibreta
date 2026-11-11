@@ -6,6 +6,7 @@ import { BalanceRail } from '@/components/ui/BalanceRail';
 import { Money } from '@/components/ui/Money';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Alert } from '@/components/ui/Alert';
+import { Spinner } from '@/components/ui/Spinner';
 import { IconDownload, IconPencil, IconPlus, IconTrash } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { Activity, Category, Client, Payment } from '@/types';
@@ -20,7 +21,7 @@ export interface ActivityDetailModalProps {
   activityId: string | null;
   clients: Client[];
   categories: Category[];
-  onActivityUpdated: () => void;
+  onActivityUpdated: (activity?: Activity) => void;
   onEditActivity: (activity: Activity) => void;
 }
 
@@ -36,6 +37,8 @@ export function ActivityDetailModal({
   const [activity, setActivity] = useState<Activity | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   // Modales secundarios
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
@@ -48,6 +51,7 @@ export function ActivityDetailModal({
   const loadDetails = useCallback(async () => {
     if (!activityId) return;
     setError(null);
+    setLoadingDetails(true);
     try {
       const [allActs, actPayments] = await Promise.all([
         api.getActivities(),
@@ -62,6 +66,8 @@ export function ActivityDetailModal({
       }
     } catch (err: unknown) {
       setError((err as Error)?.message || 'Error al cargar detalles de la actividad.');
+    } finally {
+      setLoadingDetails(false);
     }
   }, [activityId]);
 
@@ -72,6 +78,7 @@ export function ActivityDetailModal({
       setActivity(null);
       setPayments([]);
       setError(null);
+      setSyncing(false);
     }
   }, [open, activityId, loadDetails]);
 
@@ -84,35 +91,87 @@ export function ActivityDetailModal({
     if (!activity) return;
     setCancelling(true);
     try {
-      await api.cancelActivity(activity.id);
+      const cancelled = await api.cancelActivity(activity.id);
       setCancelConfirmOpen(false);
-      onActivityUpdated();
+      setActivity(cancelled);
+      onActivityUpdated(cancelled);
+      setSyncing(true);
       await loadDetails();
     } catch (err: unknown) {
       setError((err as Error)?.message || 'No fue posible cancelar la actividad.');
     } finally {
       setCancelling(false);
+      setSyncing(false);
     }
   };
 
   const handleDeletePayment = async () => {
     if (!paymentToDelete) return;
+    const paymentId = paymentToDelete.id;
+    const paymentAmount = paymentToDelete.amount;
     setDeletingPayment(true);
     try {
-      await api.deletePayment(paymentToDelete.id);
+      await api.deletePayment(paymentId);
       setPaymentToDelete(null);
-      onActivityUpdated();
+
+      // Actualización optimista inmediata
+      setPayments((prev) => prev.filter((p) => p.id !== paymentId));
+      let updatedAct: Activity | undefined;
+      setActivity((prev) => {
+        if (!prev) return null;
+        const totalReceived = Math.max(0, (prev.total_received ?? 0) - paymentAmount);
+        const balancePending = Math.max(0, prev.total_value - totalReceived);
+        const paymentStatus =
+          balancePending === 0 ? 'paid' : totalReceived > 0 ? 'partial' : 'pending';
+        updatedAct = {
+          ...prev,
+          total_received: totalReceived,
+          balance_pending: balancePending,
+          payment_status: paymentStatus as Activity['payment_status'],
+        };
+        return updatedAct;
+      });
+      if (updatedAct) {
+        onActivityUpdated(updatedAct);
+      }
+      setSyncing(true);
       await loadDetails();
     } catch (err: unknown) {
       setError((err as Error)?.message || 'No fue posible eliminar el abono.');
     } finally {
       setDeletingPayment(false);
+      setSyncing(false);
     }
   };
 
-  const handlePaymentAdded = async () => {
-    onActivityUpdated();
-    await loadDetails();
+  const handlePaymentAdded = async (newPayment: Payment) => {
+    // 1. Actualización optimista inmediata en la interfaz
+    setPayments((prev) => [newPayment, ...prev]);
+    let updatedAct: Activity | undefined;
+    setActivity((prev) => {
+      if (!prev) return null;
+      const totalReceived = (prev.total_received ?? 0) + newPayment.amount;
+      const balancePending = Math.max(0, prev.total_value - totalReceived);
+      const paymentStatus =
+        balancePending === 0 ? 'paid' : totalReceived > 0 ? 'partial' : 'pending';
+      updatedAct = {
+        ...prev,
+        total_received: totalReceived,
+        balance_pending: balancePending,
+        payment_status: paymentStatus as Activity['payment_status'],
+      };
+      return updatedAct;
+    });
+    if (updatedAct) {
+      onActivityUpdated(updatedAct);
+    }
+    // 2. Sincronización con backend con indicador visible
+    setSyncing(true);
+    try {
+      await loadDetails();
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const isCancelled = activity?.status === 'cancelled';
@@ -179,8 +238,22 @@ export function ActivityDetailModal({
             </Alert>
           ) : null}
 
-          {activity ? (
+          {loadingDetails && !activity ? (
+            <div className="py-20 flex flex-col items-center justify-center space-y-3">
+              <Spinner size={28} label="Cargando detalles de la actividad..." />
+              <p className="text-xs text-surface-500 font-medium">Cargando detalles de la actividad…</p>
+            </div>
+          ) : activity ? (
             <>
+              {syncing ? (
+                <div className="flex items-center justify-between px-3.5 py-2 bg-surface-100 rounded-md text-xs text-surface-700 border border-rule">
+                  <div className="flex items-center gap-2">
+                    <Spinner size={13} label="Guardando..." />
+                    <span className="font-medium">Guardando cambios…</span>
+                  </div>
+                  <span className="text-[11px] text-surface-500">Actualizando saldos</span>
+                </div>
+              ) : null}
               {/* Ejes de Estado: Operativo y Financiero */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-surface-50 rounded-lg border border-rule">
                 <div className="flex items-center gap-2">
@@ -303,7 +376,7 @@ export function ActivityDetailModal({
                 ) : (
                   <div className="border border-rule rounded-lg overflow-x-auto">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-surface-50 border-b border-rule text-surface-500 text-[11px]">
+                      <thead className="bg-ink border-b border-ink text-white text-[11px] font-semibold">
                         <tr>
                           <th className="py-2 px-3">Fecha</th>
                           <th className="py-2 px-3">Método</th>

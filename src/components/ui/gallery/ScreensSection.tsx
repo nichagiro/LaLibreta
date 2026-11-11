@@ -447,8 +447,8 @@ export function ScreensSection() {
                 <Select
                   label="Cliente"
                   required
-                  defaultValue={clients[0].id}
-                  placeholder="Elige un cliente"
+                  defaultValue=""
+                  placeholder="Selecciona un cliente"
                   options={clients
                     .filter((client) => client.is_active)
                     .map((client) => ({ value: client.id, label: client.name }))}
@@ -470,7 +470,8 @@ export function ScreensSection() {
                 <Select
                   label="Categoría"
                   required
-                  defaultValue="cat_5f21a0d4-0001"
+                  defaultValue=""
+                  placeholder="Selecciona una categoría"
                   options={categories
                     .filter((category) => category.is_active)
                     .map((category) => ({ value: category.id, label: category.name }))}

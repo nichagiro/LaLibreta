@@ -87,6 +87,10 @@ class MockSpreadsheet {
     this.failReads = false;
   }
 
+  getSpreadsheetTimeZone() {
+    return 'America/Bogota';
+  }
+
   getSheetByName(name) {
     if (this.failReads) throw new Error('Spreadsheet service unavailable');
     return this.sheets.get(name) || null;
@@ -136,7 +140,12 @@ function createBackend() {
       DigestAlgorithm: { SHA_256: 'sha256' },
       computeDigest: (_, input) => crypto.createHash('sha256').update(input).digest(),
       base64Encode: (input) => Buffer.from(input).toString('base64'),
-      formatDate: (date) => new Date(date.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      // Emula Utilities.formatDate(date, timeZone, format) para el patrón
+      // "yyyy-MM-dd" respetando el desplazamiento de la zona indicada.
+      formatDate: (date, timeZone) => {
+        const offsetHours = timeZone === 'UTC' ? 0 : -5;
+        return new Date(date.getTime() + offsetHours * 60 * 60 * 1000).toISOString().slice(0, 10);
+      },
     },
   };
   vm.runInNewContext(source, context, { filename: 'Code.gs' });
@@ -311,4 +320,137 @@ test('rechaza accesos no autorizados y oculta errores de Sheets', () => {
   const failure = backend.request('getClients');
   assert.equal(failure.error.code, 'SHEETS_FAILURE');
   assert.equal(failure.error.message.includes('Spreadsheet service unavailable'), false);
+});
+
+test('actualiza información de clientes existentes y valida correo', () => {
+  const backend = createBackend();
+  const { client } = createFixture(backend);
+  const updated = backend.request('updateClient', {
+    id: client.id,
+    name: 'Cliente Actualizado',
+    phone: '+57 300 123 4567',
+    email: 'contacto@cliente.co',
+    notes: 'Notas actualizadas',
+  });
+  assert.equal(updated.success, true);
+  assert.equal(updated.data.name, 'Cliente Actualizado');
+  assert.equal(updated.data.phone, '+57 300 123 4567');
+  assert.equal(updated.data.email, 'contacto@cliente.co');
+
+  // Rechaza correos mal formados
+  const badEmail = backend.request('updateClient', {
+    id: client.id,
+    email: 'correo-invalido',
+  });
+  assert.equal(badEmail.error.code, 'VALIDATION_ERROR');
+});
+
+test('actualiza nombre de categorías existentes', () => {
+  const backend = createBackend();
+  const { category } = createFixture(backend);
+  const updated = backend.request('updateCategory', {
+    id: category.id,
+    name: 'Servicios Profesionales',
+  });
+  assert.equal(updated.success, true);
+  assert.equal(updated.data.name, 'Servicios Profesionales');
+
+  const categories = backend.request('getCategories').data;
+  assert.equal(categories[0].name, 'Servicios Profesionales');
+});
+
+test('elimina abonos y restaura el saldo pendiente de la actividad', () => {
+  const backend = createBackend();
+  const { activity } = createFixture(backend);
+  const payment = backend.request('addPayment', {
+    activity_id: activity.id,
+    payment_date: '2026-11-05',
+    amount: 40000,
+    payment_method: 'nequi',
+    request_id: 'payment_del_01',
+  });
+  assert.equal(payment.success, true);
+
+  let act = backend.request('getActivities').data[0];
+  assert.equal(act.balance_pending, 60000);
+  assert.equal(act.total_received, 40000);
+
+  // Eliminar el abono
+  const deleted = backend.request('deletePayment', { id: payment.data.id });
+  assert.equal(deleted.success, true);
+  assert.equal(deleted.data.deleted, true);
+
+  // Comprobar que el saldo se restauró al valor total original
+  act = backend.request('getActivities').data[0];
+  assert.equal(act.balance_pending, 100000);
+  assert.equal(act.total_received, 0);
+  assert.equal(act.payment_status, 'pending');
+});
+
+test('gestiona configuración del emisor y valida datos permitidos', () => {
+  const backend = createBackend();
+  const initial = backend.request('getConfig');
+  assert.equal(initial.success, true);
+  assert.equal(typeof initial.data.owner_name, 'string');
+
+  const updated = backend.request('updateConfig', {
+    owner_name: 'Nicolas Chamorro',
+    business_name: 'Overweb',
+    owner_email: 'nichagiro@gmail.com',
+    owner_phone: '3174865702',
+    payment_instructions: 'Llave: 1107512506',
+  });
+  assert.equal(updated.success, true);
+  assert.equal(updated.data.owner_name, 'Nicolas Chamorro');
+  assert.equal(updated.data.business_name, 'Overweb');
+  assert.equal(updated.data.owner_email, 'nichagiro@gmail.com');
+
+  // Rechaza campos no permitidos
+  const invalidKey = backend.request('updateConfig', { campo_desconocido: 'invalido' });
+  assert.equal(invalidKey.error.code, 'VALIDATION_ERROR');
+
+  // Rechaza correo inválido en configuración
+  const invalidEmail = backend.request('updateConfig', { owner_email: 'correo-falso' });
+  assert.equal(invalidEmail.error.code, 'VALIDATION_ERROR');
+});
+
+test('responde a la acción de ping con versión activa', () => {
+  const backend = createBackend();
+  const ping = backend.request('ping');
+  assert.equal(ping.success, true);
+  assert.equal(ping.data.version, '1.0.0');
+});
+
+test('normaliza celdas con objetos Date en actividades y pagos al calcular el resumen financiero', () => {
+  const backend = createBackend();
+  const fixture = createFixture(backend);
+
+  // Simula que Google Sheets convirtió las celdas de fecha a objetos Date nativos
+  const actSheet = backend.spreadsheet.getSheetByName('Actividades');
+  // Columna 7 (índice 6) es activity_date: fila 2
+  actSheet.setCell(2, 7, new Date(Date.UTC(2026, 10, 8, 5, 0, 0))); // 2026-11-08
+
+  // Registra un pago y simula celda Date en Pagos
+  const payRes = backend.request('addPayment', {
+    activity_id: fixture.activity.id,
+    payment_date: '2026-11-08',
+    amount: 50000,
+    payment_method: 'transferencia_bancaria',
+    request_id: 'pay_date_test_001',
+  });
+  assert.equal(payRes.success, true);
+
+  const paySheet = backend.spreadsheet.getSheetByName('Pagos');
+  paySheet.setCell(2, 3, new Date(Date.UTC(2026, 10, 8, 5, 0, 0))); // Columna 3 es payment_date
+
+  const summary = backend.request('getSummary', {
+    from: '2026-11-01',
+    to: '2026-11-30',
+  });
+
+  assert.equal(summary.success, true);
+  assert.equal(summary.data.total_activities_value, 100000);
+  assert.equal(summary.data.total_money_received, 50000);
+  assert.equal(summary.data.total_balance_pending, 50000);
+  assert.equal(summary.data.activities_count.total, 1);
 });

@@ -4,6 +4,7 @@ import {
   ACTIVITY_STATUS_META,
   PAYMENT_STATUS_META,
   type StatusMarker,
+  type StatusMeta,
   type StatusTone,
 } from '@/theme/status';
 
@@ -30,10 +31,16 @@ export interface StatusChipProps {
  * distinguiéndose en escala de grises y con deficiencia de visión cromática.
  */
 export function StatusChip({ kind, value, size = 'md', className }: StatusChipProps) {
-  const meta =
+  const knownMeta =
     kind === 'activity'
       ? ACTIVITY_STATUS_META[value as ActivityStatus]
       : PAYMENT_STATUS_META[value as PaymentStatus];
+
+  const meta: StatusMeta = knownMeta || {
+    label: String(value || (kind === 'activity' ? 'Pendiente' : 'Sin abonos')),
+    tone: 'neutral',
+    marker: kind === 'activity' ? 'square-empty' : 'circle-empty',
+  };
 
   return (
     <span

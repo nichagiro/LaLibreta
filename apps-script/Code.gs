@@ -146,6 +146,40 @@ function requireDate(value, field) {
   return value;
 }
 
+/**
+ * Normaliza cualquier formato de celda de fecha de Google Sheets a YYYY-MM-DD.
+ */
+function formatSheetDate(val, timeZone) {
+  if (val === undefined || val === null || val === '') return '';
+  const tz = timeZone || 'America/Bogota';
+  if (val instanceof Date || Object.prototype.toString.call(val) === '[object Date]') {
+    if (isNaN(val.getTime())) return '';
+    return Utilities.formatDate(val, tz, 'yyyy-MM-dd');
+  }
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(str)) return str.slice(0, 10);
+  const match = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(str);
+  if (match) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const year = match[3];
+    let month = first;
+    let day = second;
+    if (first > 12) {
+      day = first;
+      month = second;
+    }
+    return year + '-' + (month < 10 ? '0' + month : month) + '-' + (day < 10 ? '0' + day : day);
+  }
+  const clean = str.replace(/\s*\([^)]*\)$/, '');
+  const parsed = new Date(clean);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
+  }
+  return str;
+}
+
 function requirePositiveAmount(value, field, allowZero) {
   if (typeof value !== 'number' || !isFinite(value) || Math.floor(value) !== value ||
       (allowZero ? value < 0 : value <= 0)) {
@@ -485,6 +519,7 @@ function getActivitiesWithCalculatedBalances(ss, paymentRows) {
 
   const actRows = sheetsReadRows(actSheet);
   const payRows = paymentRows || sheetsReadRows(paySheet);
+  const tz = (ss && typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : 'America/Bogota';
 
   // Mapear pagos acumulados por id de actividad
   const paymentsByAct = {};
@@ -498,7 +533,7 @@ function getActivitiesWithCalculatedBalances(ss, paymentRows) {
     paymentsByAct[actId].items.push({
       id: String(payRows[j][0]),
       activity_id: actId,
-      payment_date: String(payRows[j][2]),
+      payment_date: formatSheetDate(payRows[j][2], tz),
       amount: amount,
       payment_method: String(payRows[j][4]),
       notes: payRows[j][5] ? String(payRows[j][5]) : '',
@@ -539,7 +574,7 @@ function getActivitiesWithCalculatedBalances(ss, paymentRows) {
       category_id: String(actRows[i][3]),
       title: String(actRows[i][4]),
       description: String(actRows[i][5]),
-      activity_date: String(actRows[i][6]),
+      activity_date: formatSheetDate(actRows[i][6], tz),
       total_value: totalValue,
       status: status,
       internal_notes: actRows[i][9] ? String(actRows[i][9]) : '',
@@ -720,8 +755,9 @@ function addPayment(ss, data) {
     payment_method: data.payment_method, notes: notes, created_at: now };
 }
 
-function paymentFromRow(row) {
-  return { id: String(row[0]), activity_id: String(row[1]), payment_date: String(row[2]), amount: Number(row[3]),
+function paymentFromRow(row, timeZone) {
+  const tz = timeZone || 'America/Bogota';
+  return { id: String(row[0]), activity_id: String(row[1]), payment_date: formatSheetDate(row[2], tz), amount: Number(row[3]),
     payment_method: String(row[4]), notes: String(row[5] || ''), created_at: String(row[6]) };
 }
 
@@ -743,6 +779,7 @@ function getFinancialSummary(ss, fromDate, toDate) {
   ]);
   const payRows = sheetsReadRows(paySheet);
   const activities = getActivitiesWithCalculatedBalances(ss, payRows);
+  const tz = (ss && typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : 'America/Bogota';
 
   let totalActivitiesValue = 0;
   let totalBalancePending = 0;
@@ -764,7 +801,7 @@ function getFinancialSummary(ss, fromDate, toDate) {
   // Dinero recibido por fecha de pago
   let totalMoneyReceived = 0;
   for (let i = 1; i < payRows.length; i++) {
-    const payDate = String(payRows[i][2]);
+    const payDate = formatSheetDate(payRows[i][2], tz);
     const amount = parseInt(payRows[i][3], 10) || 0;
     if (!fromDate || !toDate || (payDate >= fromDate && payDate <= toDate)) {
       totalMoneyReceived += amount;
@@ -785,15 +822,16 @@ function getPayments(ss, activityId) {
   const sheet = getOrCreateSheet(ss, SHEETS.PAYMENTS, [
     'id', 'activity_id', 'payment_date', 'amount', 'payment_method', 'notes', 'created_at'
   ]);
+  const tz = (ss && typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : 'America/Bogota';
   if (activityId !== undefined) activityId = requireId(activityId, 'act_', 'activity_id');
-  return paymentsFromRows(sheetsReadRows(sheet), activityId);
+  return paymentsFromRows(sheetsReadRows(sheet), activityId, tz);
 }
 
-function paymentsFromRows(rows, activityId) {
+function paymentsFromRows(rows, activityId, timeZone) {
   const payments = [];
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0] || (activityId && String(rows[i][1]) !== activityId)) continue;
-    payments.push(paymentFromRow(rows[i]));
+    payments.push(paymentFromRow(rows[i], timeZone));
   }
   return payments;
 }
