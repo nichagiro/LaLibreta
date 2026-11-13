@@ -12,6 +12,7 @@ export interface ClientFormDialogProps {
   onClose: () => void;
   onSaved: (client: Client) => void;
   clientToEdit?: Client | null;
+  existingClients?: Client[];
 }
 
 export function ClientFormDialog({
@@ -19,6 +20,7 @@ export function ClientFormDialog({
   onClose,
   onSaved,
   clientToEdit,
+  existingClients,
 }: ClientFormDialogProps) {
   const isEditing = Boolean(clientToEdit);
 
@@ -49,9 +51,21 @@ export function ClientFormDialog({
     e.preventDefault();
     setError(null);
 
-    if (!name.trim()) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
       setError('El nombre o razón social del cliente es obligatorio.');
       return;
+    }
+
+    if (existingClients) {
+      const normalized = trimmedName.toLowerCase();
+      const duplicate = existingClients.find(
+        (c) => c.name.trim().toLowerCase() === normalized && (!clientToEdit || c.id !== clientToEdit.id)
+      );
+      if (duplicate) {
+        setError(`Ya existe un cliente registrado con el nombre "${duplicate.name}".`);
+        return;
+      }
     }
 
     setSaving(true);

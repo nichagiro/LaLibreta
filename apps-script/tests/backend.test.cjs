@@ -454,3 +454,49 @@ test('normaliza celdas con objetos Date en actividades y pagos al calcular el re
   assert.equal(summary.data.total_balance_pending, 50000);
   assert.equal(summary.data.activities_count.total, 1);
 });
+
+test('rechaza la creación y actualización de clientes con nombres duplicados', () => {
+  const backend = createBackend();
+  const c1 = backend.request('createClient', { name: 'Acme Corp', request_id: 'cli_dup_1' });
+  assert.equal(c1.success, true);
+
+  // Duplicado con distinta capitalización y espacios
+  const dup = backend.request('createClient', { name: '  acme corp  ', request_id: 'cli_dup_2' });
+  assert.equal(dup.success, false);
+  assert.equal(dup.error.code, 'DUPLICATE_ENTITY');
+
+  const c2 = backend.request('createClient', { name: 'Globex Inc', request_id: 'cli_dup_3' });
+  assert.equal(c2.success, true);
+
+  // Intentar renombrar c2 con el nombre de c1
+  const updateDup = backend.request('updateClient', { id: c2.data.id, name: 'acme corp' });
+  assert.equal(updateDup.success, false);
+  assert.equal(updateDup.error.code, 'DUPLICATE_ENTITY');
+
+  // Permitir actualizar c2 con su propio nombre
+  const updateSame = backend.request('updateClient', { id: c2.data.id, name: 'Globex Inc' });
+  assert.equal(updateSame.success, true);
+});
+
+test('rechaza la creación y actualización de categorías con nombres duplicados', () => {
+  const backend = createBackend();
+  const cat1 = backend.request('createCategory', { name: 'Diseño Gráfico' });
+  assert.equal(cat1.success, true);
+
+  // Duplicado con espacios y minúsculas
+  const dup = backend.request('createCategory', { name: '  diseño gráfico  ' });
+  assert.equal(dup.success, false);
+  assert.equal(dup.error.code, 'DUPLICATE_ENTITY');
+
+  const cat2 = backend.request('createCategory', { name: 'Consultoría' });
+  assert.equal(cat2.success, true);
+
+  // Renombrar a un nombre existente
+  const updateDup = backend.request('updateCategory', { id: cat2.data.id, name: 'DISEÑO GRÁFICO' });
+  assert.equal(updateDup.success, false);
+  assert.equal(updateDup.error.code, 'DUPLICATE_ENTITY');
+
+  // Renombrar conservando el mismo nombre
+  const updateSame = backend.request('updateCategory', { id: cat2.data.id, name: 'Consultoría' });
+  assert.equal(updateSame.success, true);
+});

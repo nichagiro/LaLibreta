@@ -320,6 +320,7 @@ export function ClientsView({
         onClose={() => setFormOpen(false)}
         onSaved={handleClientSaved}
         clientToEdit={clientToEdit}
+        existingClients={clients}
       />
     </div>
   );

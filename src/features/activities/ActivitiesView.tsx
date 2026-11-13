@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Panel } from '@/components/ui/Panel';
@@ -68,29 +68,27 @@ export function ActivitiesView({ initialClientId, onClearInitialClient }: Activi
       }
     } else {
       setSelectedActivityId(null);
-      if (activityToEdit) {
-        setFormOpen(false);
-        setActivityToEdit(null);
-      }
+      setFormOpen(false);
+      setActivityToEdit(null);
     }
-  }, [routeLoc.route, routeLoc.id, routeLoc.action, activities, loading, activityToEdit]);
+  }, [routeLoc.route, routeLoc.id, routeLoc.action, activities, loading]);
 
-  const handleOpenActivity = (id: string) => {
+  const handleOpenActivity = useCallback((id: string) => {
     navigateTo('activities', { id });
-  };
+  }, []);
 
-  const handleCloseActivity = () => {
+  const handleCloseActivity = useCallback(() => {
     setSelectedActivityId(null);
     clearRouteDetail('activities');
-  };
+  }, []);
 
-  const handleCloseForm = () => {
+  const handleCloseForm = useCallback(() => {
     setFormOpen(false);
     setActivityToEdit(null);
     clearRouteDetail('activities');
-  };
+  }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [acts, clis, cats] = await Promise.all([
@@ -106,49 +104,53 @@ export function ActivitiesView({ initialClientId, onClearInitialClient }: Activi
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  /**
+   * Inserta o actualiza una actividad en el estado local de la tabla
+   * sin cerrar modales ni alterar la ruta activa.
+   */
+  const handleActivityUpsert = useCallback((updated: Activity) => {
+    setActivities((prev) => {
+      const exists = prev.some((a) => a.id === updated.id);
+      return exists
+        ? prev.map((a) => (a.id === updated.id ? updated : a))
+        : [updated, ...prev];
+    });
   }, []);
 
   /**
-   * Inserta o reemplaza la actividad con el registro que la API devuelve ya
-   * persistido (con total_received, balance_pending y payment_status
-   * recalculados), evitando recargar actividades + clientes + categorías.
+   * Guardado desde el formulario de creación o edición.
+   * Actualiza el listado y cierra el formulario de la actividad.
    */
-  const handleActivitySaved = (saved: Activity) => {
-    setActivities((prev) => {
-      const exists = prev.some((a) => a.id === saved.id);
-      return exists
-        ? prev.map((a) => (a.id === saved.id ? saved : a))
-        : [...prev, saved];
-    });
-    setFormOpen(false);
-    setActivityToEdit(null);
-    clearRouteDetail('activities');
-  };
+  const handleActivitySaved = useCallback((saved: Activity) => {
+    handleActivityUpsert(saved);
+    handleCloseForm();
+  }, [handleActivityUpsert, handleCloseForm]);
 
   /**
-   * Actualización desde el modal de detalle. Con la actividad en mano
-   * (cancelación) se actualiza la fila sin red; en operaciones de pagos el
-   * backend recalcula el saldo, así que solo se refresca el listado, que es
-   * la única fuente afectada (clientes y categorías no cambian).
+   * Actualización proveniente del modal de detalle (registro de abonos, eliminación
+   * de pagos o cancelación). Conserva el modal de detalle abierto y actualiza
+   * inmediatamente la fila de la tabla en segundo plano.
    */
-  const applyActivityUpdate = async (updated?: Activity) => {
+  const applyActivityUpdate = useCallback(async (updated?: Activity) => {
     if (updated) {
-      handleActivitySaved(updated);
+      handleActivityUpsert(updated);
       return;
     }
     setRefreshing(true);
     try {
-      setActivities(await api.getActivities());
+      setActivities(await api.getActivities({ forceRefresh: true }));
     } catch {
       // Error silencioso, manejado por estado vacío
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [handleActivityUpsert]);
 
   useEffect(() => {
     if (initialClientId) {

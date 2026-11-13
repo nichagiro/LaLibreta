@@ -6,7 +6,7 @@ import { buildActivityPdf } from '../src/features/pdf/generatePdf.ts';
 import { sheetsApi } from '../src/services/sheets-api.ts';
 import { api } from '../src/services/api.ts';
 import { normalizeDate, formatDateEs, formatDateLongEs } from '../src/theme/format.ts';
-import { routeFromHash, parseHash } from '../src/router.ts';
+import { routeFromHash, parseHash, getCurrentRouteLocation } from '../src/router.ts';
 
 test('1. Flujo de Clientes: creación, consulta y desactivación lógica', async () => {
   mockAdapter.resetData();
@@ -390,6 +390,47 @@ test('11. Creación de actividad y registro de pago inmediato automático', asyn
   assert.equal(updatedAct.payment_status, 'paid');
 });
 
+test('11b. Creación de actividad con abono parcial inicial (anticipo)', async () => {
+  mockAdapter.resetData();
+
+  const clients = await mockAdapter.getClients();
+  const client = clients.find((c) => c.is_active);
+  assert.ok(client);
+  const categories = await mockAdapter.getCategories();
+  const category = categories.find((c) => c.is_active);
+  assert.ok(category);
+
+  // Crear actividad por $ 600.000 COP
+  const act = await mockAdapter.createActivity({
+    client_id: client.id,
+    type: 'service',
+    category_id: category.id,
+    title: 'Consultoría técnica inicial',
+    activity_date: '2026-11-10',
+    total_value: 600000,
+  });
+
+  // Registrar abono parcial de $ 250.000 COP como anticipo
+  const payment = await mockAdapter.addPayment({
+    activity_id: act.id,
+    payment_date: '2026-11-10',
+    amount: 250000,
+    payment_method: 'nequi',
+    notes: 'Anticipo inicial',
+  });
+
+  assert.ok(payment.id.startsWith('pay_'));
+  assert.equal(payment.amount, 250000);
+
+  // Comprobar que en getActivities el saldo pendiente es $ 350.000 y el estado es partial
+  const acts = await mockAdapter.getActivities();
+  const updatedAct = acts.find((a) => a.id === act.id);
+  assert.ok(updatedAct);
+  assert.equal(updatedAct.total_received, 250000);
+  assert.equal(updatedAct.balance_pending, 350000);
+  assert.equal(updatedAct.payment_status, 'partial');
+});
+
 test('12. Selectores sin valor asignado: el backend rechaza valores no elegidos', async () => {
   mockAdapter.resetData();
 
@@ -480,6 +521,11 @@ test('13. Enrutamiento y Deep Linking: resolución de rutas con parámetros en r
   assert.equal(parsedQuery.route, 'activities');
   assert.equal(parsedQuery.id, 'act_12345');
   assert.equal(parsedQuery.action, 'edit');
+
+  // Estabilidad referencial en getCurrentRouteLocation para useSyncExternalStore
+  const locA = getCurrentRouteLocation();
+  const locB = getCurrentRouteLocation();
+  assert.equal(locA, locB);
 });
 
 test('14. Caché en memoria nativa en ApiService: lectura rápida e invalidación por mutación', async () => {
@@ -518,4 +564,85 @@ test('14. Caché en memoria nativa en ApiService: lectura rápida e invalidació
   } finally {
     api.setMockMode(false);
   }
+});
+
+test('15. Validación de duplicados: rechaza clientes y categorías con el mismo nombre', async () => {
+  mockAdapter.resetData();
+
+  // Cliente existente en los datos iniciales de mock (ej: "Empresa Alfa SAS")
+  const clients = await mockAdapter.getClients();
+  const existingClient = clients[0];
+
+  // Rechazar creación con nombre duplicado (sin importar mayúsculas o espacios)
+  await assert.rejects(
+    async () => {
+      await mockAdapter.createClient({
+        name: `  ${existingClient.name.toUpperCase()}  `,
+      });
+    },
+    (err) => {
+      assert.equal(err.code, 'DUPLICATE_ENTITY');
+      return true;
+    }
+  );
+
+  // Crear cliente nuevo válido
+  const brandNew = await mockAdapter.createClient({ name: 'Cliente No Duplicado Unico' });
+  assert.ok(brandNew.id);
+
+  // Rechazar renombrar brandNew con el nombre de existingClient
+  await assert.rejects(
+    async () => {
+      await mockAdapter.updateClient({
+        id: brandNew.id,
+        name: existingClient.name.toLowerCase(),
+      });
+    },
+    (err) => {
+      assert.equal(err.code, 'DUPLICATE_ENTITY');
+      return true;
+    }
+  );
+
+  // Permitir renombrar brandNew con su propio nombre (o modificando solo teléfono)
+  const updatedBrandNew = await mockAdapter.updateClient({
+    id: brandNew.id,
+    name: brandNew.name,
+    phone: '1234567',
+  });
+  assert.equal(updatedBrandNew.phone, '1234567');
+
+  // Categorías
+  const categories = await mockAdapter.getCategories();
+  const existingCat = categories[0];
+
+  // Rechazar creación de categoría duplicada
+  await assert.rejects(
+    async () => {
+      await mockAdapter.createCategory({ name: ` ${existingCat.name.toUpperCase()} ` });
+    },
+    (err) => {
+      assert.equal(err.code, 'DUPLICATE_ENTITY');
+      return true;
+    }
+  );
+
+  // Crear categoría nueva válida
+  const newCat = await mockAdapter.createCategory({ name: 'Categoría Unica de Prueba' });
+  assert.ok(newCat.id);
+
+  // Rechazar renombrar a nombre duplicado
+  await assert.rejects(
+    async () => {
+      await mockAdapter.updateCategory({ id: newCat.id, name: existingCat.name });
+    },
+    (err) => {
+      assert.equal(err.code, 'DUPLICATE_ENTITY');
+      return true;
+    }
+  );
+
+  // Permitir renombrar manteniendo su mismo nombre
+  const updatedCat = await mockAdapter.updateCategory({ id: newCat.id, name: newCat.name });
+  assert.equal(updatedCat.name, newCat.name);
 });

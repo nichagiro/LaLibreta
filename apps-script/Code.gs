@@ -427,6 +427,16 @@ function createClient(ss, data) {
   ]));
   const previous = idempotentRecord(sheet, 'createClient', data);
   if (previous) return clientFromRow(previous);
+
+  // Validación de duplicados por nombre (case-insensitive)
+  const clientRows = sheetsReadRows(sheet);
+  const normalizedNewName = name.toLowerCase().trim();
+  for (let i = 1; i < clientRows.length; i++) {
+    if (clientRows[i][0] && String(clientRows[i][1]).toLowerCase().trim() === normalizedNewName) {
+      throw apiError('DUPLICATE_ENTITY', 'Ya existe un cliente con el nombre "' + String(clientRows[i][1]) + '".');
+    }
+  }
+
   const now = new Date().toISOString();
   const id = 'cli_' + Utilities.getUuid();
   appendWithIdempotency(sheet, [
@@ -461,6 +471,18 @@ function updateClient(ss, data) {
     email: data.email === undefined ? current.email : requireEmail(data.email, 'email'),
     notes: data.notes === undefined ? current.notes : requireString(data.notes, 'notes', false, 5000),
   };
+
+  // Validación de duplicados por nombre si se está modificando el nombre
+  if (data.name !== undefined) {
+    const clientRows = sheetsReadRows(sheet);
+    const normalizedNewName = updated.name.toLowerCase().trim();
+    for (let i = 1; i < clientRows.length; i++) {
+      if (clientRows[i][0] && String(clientRows[i][0]) !== id && String(clientRows[i][1]).toLowerCase().trim() === normalizedNewName) {
+        throw apiError('DUPLICATE_ENTITY', 'Ya existe otro cliente con el nombre "' + String(clientRows[i][1]) + '".');
+      }
+    }
+  }
+
   const now = new Date().toISOString();
   sheetsWriteRange(sheet, existing.row, 2, [[updated.name, updated.phone, updated.email, updated.notes]]);
   sheetsWriteCell(sheet, existing.row, 8, now);
@@ -487,6 +509,16 @@ function createCategory(ss, data) {
   requireObject(data);
   const name = requireString(data.name, 'name', true, 100);
   const sheet = getOrCreateSheet(ss, SHEETS.CATEGORIES, ['id', 'name', 'is_active', 'created_at', 'updated_at']);
+
+  // Validación de duplicados por nombre
+  const catRows = sheetsReadRows(sheet);
+  const normalizedNewName = name.toLowerCase().trim();
+  for (let i = 1; i < catRows.length; i++) {
+    if (catRows[i][0] && String(catRows[i][1]).toLowerCase().trim() === normalizedNewName) {
+      throw apiError('DUPLICATE_ENTITY', 'Ya existe una categoría con el nombre "' + String(catRows[i][1]) + '".');
+    }
+  }
+
   const now = new Date().toISOString();
   const id = 'cat_' + Utilities.getUuid();
   sheetsAppendRow(sheet, [id, name, true, now, now]);
@@ -499,6 +531,18 @@ function updateCategory(ss, data) {
   const sheet = getOrCreateSheet(ss, SHEETS.CATEGORIES, ['id', 'name', 'is_active', 'created_at', 'updated_at']);
   const existing = requireEntity(sheet, id, 'Categoría');
   const name = data.name === undefined ? String(existing.values[1]) : requireString(data.name, 'name', true, 100);
+
+  // Validación de duplicados por nombre si se está renombrando
+  if (data.name !== undefined) {
+    const catRows = sheetsReadRows(sheet);
+    const normalizedNewName = name.toLowerCase().trim();
+    for (let i = 1; i < catRows.length; i++) {
+      if (catRows[i][0] && String(catRows[i][0]) !== id && String(catRows[i][1]).toLowerCase().trim() === normalizedNewName) {
+        throw apiError('DUPLICATE_ENTITY', 'Ya existe otra categoría con el nombre "' + String(catRows[i][1]) + '".');
+      }
+    }
+  }
+
   const now = new Date().toISOString();
   sheetsWriteCell(sheet, existing.row, 2, name);
   sheetsWriteCell(sheet, existing.row, 5, now);

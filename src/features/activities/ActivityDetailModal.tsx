@@ -25,6 +25,18 @@ export interface ActivityDetailModalProps {
   onEditActivity: (activity: Activity) => void;
 }
 
+/**
+ * Ordena los abonos en orden cronológico histórico (del más antiguo al más reciente).
+ * Coincide con la narrativa del comprobante PDF y evita cualquier salto visual.
+ */
+function sortPaymentsChronological(list: Payment[]): Payment[] {
+  return [...list].sort((a, b) => {
+    const dateCmp = (a.payment_date || '').localeCompare(b.payment_date || '');
+    if (dateCmp !== 0) return dateCmp;
+    return (a.created_at || a.id).localeCompare(b.created_at || b.id);
+  });
+}
+
 export function ActivityDetailModal({
   open,
   onClose,
@@ -60,7 +72,7 @@ export function ActivityDetailModal({
       const current = allActs.find((a) => a.id === activityId);
       if (current) {
         setActivity(current);
-        setPayments(actPayments);
+        setPayments(sortPaymentsChronological(actPayments));
       } else {
         setError('La actividad no existe o fue eliminada.');
       }
@@ -116,22 +128,18 @@ export function ActivityDetailModal({
 
       // Actualización optimista inmediata
       setPayments((prev) => prev.filter((p) => p.id !== paymentId));
-      let updatedAct: Activity | undefined;
-      setActivity((prev) => {
-        if (!prev) return null;
-        const totalReceived = Math.max(0, (prev.total_received ?? 0) - paymentAmount);
-        const balancePending = Math.max(0, prev.total_value - totalReceived);
+      if (activity) {
+        const totalReceived = Math.max(0, (activity.total_received ?? 0) - paymentAmount);
+        const balancePending = Math.max(0, activity.total_value - totalReceived);
         const paymentStatus =
           balancePending === 0 ? 'paid' : totalReceived > 0 ? 'partial' : 'pending';
-        updatedAct = {
-          ...prev,
+        const updatedAct: Activity = {
+          ...activity,
           total_received: totalReceived,
           balance_pending: balancePending,
           payment_status: paymentStatus as Activity['payment_status'],
         };
-        return updatedAct;
-      });
-      if (updatedAct) {
+        setActivity(updatedAct);
         onActivityUpdated(updatedAct);
       }
       setSyncing(true);
@@ -145,27 +153,23 @@ export function ActivityDetailModal({
   };
 
   const handlePaymentAdded = async (newPayment: Payment) => {
-    // 1. Actualización optimista inmediata en la interfaz
-    setPayments((prev) => [newPayment, ...prev]);
-    let updatedAct: Activity | undefined;
-    setActivity((prev) => {
-      if (!prev) return null;
-      const totalReceived = (prev.total_received ?? 0) + newPayment.amount;
-      const balancePending = Math.max(0, prev.total_value - totalReceived);
+    // 1. Actualización optimista inmediata en orden cronológico consistente
+    setPayments((prev) => sortPaymentsChronological([...prev, newPayment]));
+    if (activity) {
+      const totalReceived = (activity.total_received ?? 0) + newPayment.amount;
+      const balancePending = Math.max(0, activity.total_value - totalReceived);
       const paymentStatus =
         balancePending === 0 ? 'paid' : totalReceived > 0 ? 'partial' : 'pending';
-      updatedAct = {
-        ...prev,
+      const updatedAct: Activity = {
+        ...activity,
         total_received: totalReceived,
         balance_pending: balancePending,
         payment_status: paymentStatus as Activity['payment_status'],
       };
-      return updatedAct;
-    });
-    if (updatedAct) {
+      setActivity(updatedAct);
       onActivityUpdated(updatedAct);
     }
-    // 2. Sincronización con backend con indicador visible
+    // 2. Sincronización autoritativa con backend con indicador visible
     setSyncing(true);
     try {
       await loadDetails();

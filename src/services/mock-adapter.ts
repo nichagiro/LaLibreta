@@ -141,6 +141,11 @@ class MockApiAdapter {
     if (!payload.name || !payload.name.trim()) {
       throw { code: 'VALIDATION_ERROR', message: 'El nombre del cliente es obligatorio.' };
     }
+    const normalizedName = payload.name.trim().toLowerCase();
+    const duplicate = this.clients.find((c) => c.name.trim().toLowerCase() === normalizedName);
+    if (duplicate) {
+      throw { code: 'DUPLICATE_ENTITY', message: `Ya existe un cliente con el nombre "${duplicate.name}".` };
+    }
     const now = new Date().toISOString();
     const newClient: Client = {
       id: `cli_${crypto.randomUUID().slice(0, 8)}`,
@@ -171,6 +176,13 @@ class MockApiAdapter {
       if (!payload.name.trim()) {
         throw { code: 'VALIDATION_ERROR', message: 'El nombre no puede estar vacío.' };
       }
+      const normalizedName = payload.name.trim().toLowerCase();
+      const duplicate = this.clients.find(
+        (c) => c.id !== payload.id && c.name.trim().toLowerCase() === normalizedName
+      );
+      if (duplicate) {
+        throw { code: 'DUPLICATE_ENTITY', message: `Ya existe otro cliente con el nombre "${duplicate.name}".` };
+      }
       client.name = payload.name.trim();
     }
     if (payload.phone !== undefined) client.phone = payload.phone.trim() || undefined;
@@ -200,6 +212,11 @@ class MockApiAdapter {
     if (!payload.name || !payload.name.trim()) {
       throw { code: 'VALIDATION_ERROR', message: 'El nombre de la categoría es obligatorio.' };
     }
+    const normalizedName = payload.name.trim().toLowerCase();
+    const duplicate = this.categories.find((c) => c.name.trim().toLowerCase() === normalizedName);
+    if (duplicate) {
+      throw { code: 'DUPLICATE_ENTITY', message: `Ya existe una categoría con el nombre "${duplicate.name}".` };
+    }
     const now = new Date().toISOString();
     const newCategory: Category = {
       id: `cat_${crypto.randomUUID().slice(0, 8)}`,
@@ -219,6 +236,13 @@ class MockApiAdapter {
     }
     if (!payload.name || !payload.name.trim()) {
       throw { code: 'VALIDATION_ERROR', message: 'El nombre de la categoría no puede estar vacío.' };
+    }
+    const normalizedName = payload.name.trim().toLowerCase();
+    const duplicate = this.categories.find(
+      (c) => c.id !== payload.id && c.name.trim().toLowerCase() === normalizedName
+    );
+    if (duplicate) {
+      throw { code: 'DUPLICATE_ENTITY', message: `Ya existe otra categoría con el nombre "${duplicate.name}".` };
     }
     cat.name = payload.name.trim();
     cat.updated_at = new Date().toISOString();

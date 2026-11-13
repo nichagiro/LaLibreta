@@ -14,6 +14,7 @@ export interface CategoryFormDialogProps {
   onClose: () => void;
   onSaved: (category: Category, mode: CategorySaveMode) => void;
   categoryToEdit?: Category | null;
+  existingCategories?: Category[];
 }
 
 export function CategoryFormDialog({
@@ -21,6 +22,7 @@ export function CategoryFormDialog({
   onClose,
   onSaved,
   categoryToEdit,
+  existingCategories,
 }: CategoryFormDialogProps) {
   const isEditing = Boolean(categoryToEdit);
   const [name, setName] = useState('');
@@ -44,6 +46,17 @@ export function CategoryFormDialog({
     if (!name.trim()) {
       setError('El nombre de la categoría es obligatorio.');
       return;
+    }
+
+    if (existingCategories) {
+      const normalized = name.trim().toLowerCase();
+      const duplicate = existingCategories.find(
+        (c) => c.name.trim().toLowerCase() === normalized && (!categoryToEdit || c.id !== categoryToEdit.id)
+      );
+      if (duplicate) {
+        setError(`Ya existe una categoría registrada con el nombre "${duplicate.name}".`);
+        return;
+      }
     }
 
     setSaving(true);

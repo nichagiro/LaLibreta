@@ -13,6 +13,7 @@ import { api } from '@/services/api';
 import type { Activity, ActivityType, ActivityStatus, Category, Client, PaymentMethod } from '@/types';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_ORDER } from '@/theme/status';
 import { SELECT_PLACEHOLDERS } from '@/theme/select';
+import { formatCop } from '@/theme/format';
 import { cn } from '@/theme/cn';
 
 export interface ActivityFormDialogProps {
@@ -47,8 +48,10 @@ export function ActivityFormDialog({
   const [publicNotes, setPublicNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
 
-  // Marcar automáticamente paga al momento de la creación
-  const [isPaidImmediately, setIsPaidImmediately] = useState(false);
+  // Cobro o abono inicial al momento de la creación
+  const [hasInitialPayment, setHasInitialPayment] = useState(false);
+  const [initialPaymentType, setInitialPaymentType] = useState<'full' | 'partial'>('full');
+  const [initialPaymentAmount, setInitialPaymentAmount] = useState<number | null>(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
   const [paymentNotes, setPaymentNotes] = useState('');
@@ -74,7 +77,9 @@ export function ActivityFormDialog({
       setStatus(activityToEdit.status);
       setPublicNotes(activityToEdit.public_notes || '');
       setInternalNotes(activityToEdit.internal_notes || '');
-      setIsPaidImmediately(false);
+      setHasInitialPayment(false);
+      setInitialPaymentType('full');
+      setInitialPaymentAmount(null);
       setPaymentMethod('');
       setPaymentNotes('');
     } else {
@@ -91,7 +96,9 @@ export function ActivityFormDialog({
       setStatus('');
       setPublicNotes('');
       setInternalNotes('');
-      setIsPaidImmediately(false);
+      setHasInitialPayment(false);
+      setInitialPaymentType('full');
+      setInitialPaymentAmount(null);
       setPaymentDate(today);
       setPaymentMethod('');
       setPaymentNotes('');
@@ -135,7 +142,12 @@ export function ActivityFormDialog({
       return;
     }
 
-    if (!isEditing && isPaidImmediately) {
+    let amountToPay = 0;
+    if (!isEditing && hasInitialPayment) {
+      if (totalValue <= 0) {
+        setError('El valor total debe ser mayor a cero para registrar un cobro o abono inicial.');
+        return;
+      }
       if (!paymentDate) {
         setError('La fecha del pago es obligatoria.');
         return;
@@ -144,11 +156,20 @@ export function ActivityFormDialog({
         setError('Debes seleccionar un método de pago.');
         return;
       }
+      amountToPay = initialPaymentType === 'full' ? totalValue : (initialPaymentAmount ?? 0);
+      if (amountToPay <= 0 || !Number.isInteger(amountToPay)) {
+        setError('El monto del abono inicial debe ser un número entero mayor a cero.');
+        return;
+      }
+      if (amountToPay > totalValue) {
+        setError(
+          `El abono inicial (${formatCop(amountToPay)}) supera el valor total (${formatCop(
+            totalValue
+          )}). No se permiten sobrepagos.`
+        );
+        return;
+      }
     }
-
-    // El método solo se usa cuando además hay un valor total a cobrar.
-    const methodForPayment: PaymentMethod | null =
-      isPaidImmediately && totalValue > 0 ? paymentMethod || null : null;
 
     setSaving(true);
     try {
@@ -180,26 +201,29 @@ export function ActivityFormDialog({
           internal_notes: internalNotes.trim(),
         });
 
-        if (isPaidImmediately && totalValue > 0 && methodForPayment) {
+        if (hasInitialPayment && totalValue > 0 && amountToPay > 0 && paymentMethod) {
           try {
             await api.addPayment({
               activity_id: created.id,
               payment_date: paymentDate,
-              amount: totalValue,
-              payment_method: methodForPayment,
+              amount: amountToPay,
+              payment_method: paymentMethod,
               notes: paymentNotes.trim(),
             });
+            const balancePending = Math.max(0, totalValue - amountToPay);
+            const paymentStatus: Activity['payment_status'] =
+              balancePending === 0 ? 'paid' : 'partial';
             onSaved({
               ...created,
-              total_received: totalValue,
-              balance_pending: 0,
-              payment_status: 'paid',
+              total_received: amountToPay,
+              balance_pending: balancePending,
+              payment_status: paymentStatus,
             });
             onClose();
           } catch (payErr: unknown) {
             onSaved(created);
             setError(
-              `La actividad fue creada, pero no se pudo registrar el pago automático: ${
+              `La actividad fue creada, pero no se pudo registrar el abono inicial: ${
                 (payErr as Error)?.message || 'Error desconocido'
               }. Puedes registrar el abono manualmente desde el detalle de la actividad.`
             );
@@ -367,18 +391,84 @@ export function ActivityFormDialog({
           />
         </div>
 
-        {/* Pago automático al momento de la creación */}
+        {/* Pago o abono inicial al momento de la creación */}
         {!isEditing && (
           <div className="border-t border-rule pt-4 space-y-3">
             <Switch
-              label="Marcar como pagada de inmediato"
-              description="Registra automáticamente un pago por el valor total acordado al guardar."
-              checked={isPaidImmediately}
-              onChange={setIsPaidImmediately}
+              label="Registrar abono o pago inicial"
+              description="Registra un anticipo parcial o el pago total al guardar la actividad."
+              checked={hasInitialPayment}
+              onChange={(checked) => {
+                setHasInitialPayment(checked);
+                if (checked && initialPaymentType === 'full' && totalValue) {
+                  setInitialPaymentAmount(totalValue);
+                }
+              }}
             />
 
-            {isPaidImmediately && (
+            {hasInitialPayment && (
               <div className="bg-surface-50 p-3.5 rounded-lg border border-rule space-y-3 mt-3">
+                {/* Modalidad: Pago Total vs Abono Parcial */}
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium text-surface-700">
+                    Modalidad del cobro inicial
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInitialPaymentType('full');
+                        setInitialPaymentAmount(totalValue || 0);
+                      }}
+                      className={cn(
+                        'py-2 px-3 rounded text-xs font-medium border text-center transition-colors cursor-pointer',
+                        initialPaymentType === 'full'
+                          ? 'bg-ink text-white border-ink shadow-xs'
+                          : 'bg-white text-surface-700 border-rule hover:bg-surface-100'
+                      )}
+                    >
+                      Pago total completo {totalValue ? `(${formatCop(totalValue)})` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInitialPaymentType('partial');
+                        if (!initialPaymentAmount && totalValue) {
+                          setInitialPaymentAmount(Math.round(totalValue / 2));
+                        }
+                      }}
+                      className={cn(
+                        'py-2 px-3 rounded text-xs font-medium border text-center transition-colors cursor-pointer',
+                        initialPaymentType === 'partial'
+                          ? 'bg-ink text-white border-ink shadow-xs'
+                          : 'bg-white text-surface-700 border-rule hover:bg-surface-100'
+                      )}
+                    >
+                      Abono parcial / Anticipo
+                    </button>
+                  </div>
+                </div>
+
+                {/* Monto del abono parcial */}
+                {initialPaymentType === 'partial' && (
+                  <div>
+                    <MoneyField
+                      label="Monto del abono inicial"
+                      value={initialPaymentAmount}
+                      onValueChange={setInitialPaymentAmount}
+                      showCode
+                      required
+                      hint={
+                        totalValue && initialPaymentAmount !== null
+                          ? initialPaymentAmount > totalValue
+                            ? `El abono supera el valor total (${formatCop(totalValue)}). No se permiten sobrepagos.`
+                            : `Saldo que quedará pendiente por cobrar: ${formatCop(Math.max(0, totalValue - initialPaymentAmount))}`
+                          : 'Ingresa el monto recibido por adelantado.'
+                      }
+                    />
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <DateField
                     label="Fecha del ingreso"

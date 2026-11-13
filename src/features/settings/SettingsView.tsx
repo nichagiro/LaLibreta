@@ -329,6 +329,7 @@ export function SettingsView() {
         onClose={() => setCategoryFormOpen(false)}
         onSaved={handleCategorySaved}
         categoryToEdit={categoryToEdit}
+        existingCategories={categories}
       />
 
       {/* Confirmación Desactivar/Activar Categoría */}

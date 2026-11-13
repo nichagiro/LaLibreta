@@ -108,14 +108,31 @@ function currentHash(): string {
   return typeof window === 'undefined' ? '' : window.location.hash;
 }
 
-/** Vista activa según la URL. */
-export function getCurrentRoute(): AppRoute {
-  return parseHash(currentHash()).route;
+let cachedRawHash: string | null = null;
+let cachedLocation: RouteLocation = {
+  route: DEFAULT_ROUTE,
+  id: null,
+  action: null,
+  params: {},
+};
+
+/**
+ * Ubicación completa activa según la URL.
+ * Mantiene estabilidad referencial: si el hash no cambia, retorna exactamente la misma instancia de objeto.
+ * Esto es indispensable para evitar bucles infinitos en useSyncExternalStore (React 18).
+ */
+export function getCurrentRouteLocation(): RouteLocation {
+  const hash = currentHash();
+  if (hash !== cachedRawHash) {
+    cachedRawHash = hash;
+    cachedLocation = parseHash(hash);
+  }
+  return cachedLocation;
 }
 
-/** Ubicación completa activa según la URL. */
-export function getCurrentRouteLocation(): RouteLocation {
-  return parseHash(currentHash());
+/** Vista activa según la URL. */
+export function getCurrentRoute(): AppRoute {
+  return getCurrentRouteLocation().route;
 }
 
 /** Suscripción a los cambios de hash (incluye Atrás/Adelante). */
@@ -127,12 +144,12 @@ export function subscribeToRoute(listener: () => void): () => void {
 
 /** Extrae todos los parámetros de consulta del hash actual. */
 export function getRouteParams(): Record<string, string> {
-  return parseHash(currentHash()).params;
+  return getCurrentRouteLocation().params;
 }
 
 /** Devuelve el valor de un parámetro del hash actual, o `null` si no existe. */
 export function getRouteParam(key: string): string | null {
-  const loc = parseHash(currentHash());
+  const loc = getCurrentRouteLocation();
   if (key === 'id') return loc.id;
   if (key === 'action') return loc.action;
   return loc.params[key] ?? null;

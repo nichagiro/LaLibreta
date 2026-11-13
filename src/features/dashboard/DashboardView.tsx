@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -15,6 +15,7 @@ import { IconPlus, IconClients } from '@/components/ui/Icon';
 import { api } from '@/services/api';
 import type { Activity, Category, Client, FinancialSummary } from '@/types';
 import { formatDateEs } from '@/theme/format';
+import { cn } from '@/theme/cn';
 import { ActivityFormDialog } from '../activities/ActivityFormDialog';
 import { ClientFormDialog } from '../clients/ClientFormDialog';
 
@@ -107,18 +108,18 @@ export function DashboardView({
 
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [allActivities, setAllActivities] = useState<Activity[]>([]);
-  const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLoading, setFilterLoading] = useState(false);
+  const [tableSubFilter, setTableSubFilter] = useState<'all' | 'unpaid' | 'in_progress' | 'completed'>('all');
 
   // Modales
   const [activityFormOpen, setActivityFormOpen] = useState(false);
   const [clientFormOpen, setClientFormOpen] = useState(false);
 
   /**
-   * Carga completa inicial: actividades recientes, clientes, categorías y resumen financiero.
+   * Carga completa inicial: actividades, clientes, categorías y resumen financiero.
    * Se ejecuta al montar la vista de Inicio y cuando se registra una nueva actividad.
    */
   const loadInitialData = useCallback(async (force = false) => {
@@ -133,9 +134,6 @@ export function DashboardView({
       ]);
       setAllActivities(acts);
       setSummary(resolveSummary(sum, acts, appliedFrom, appliedTo));
-      // Ordenar actividades por fecha descendente de forma segura y tomar las 5 más recientes
-      const sorted = [...acts].sort((a, b) => (b.activity_date || '').localeCompare(a.activity_date || ''));
-      setRecentActivities(sorted.slice(0, 5));
       setClients(clis);
       setCategories(cats);
     } catch (err: unknown) {
@@ -148,6 +146,45 @@ export function DashboardView({
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  // Actividades que caen dentro del período filtrado (sincronizadas reactivamente)
+  const periodActivities = useMemo(() => {
+    return allActivities
+      .filter((act) => {
+        const actDate = act.activity_date || '';
+        if (!appliedFrom || !appliedTo) return true;
+        return actDate >= appliedFrom && actDate <= appliedTo;
+      })
+      .sort((a, b) => (b.activity_date || '').localeCompare(a.activity_date || ''));
+  }, [allActivities, appliedFrom, appliedTo]);
+
+  // Conteos rápidos de sub-filtros dentro del período
+  const unpaidCount = useMemo(
+    () => periodActivities.filter((a) => a.status !== 'cancelled' && (a.balance_pending ?? 0) > 0).length,
+    [periodActivities]
+  );
+  const inProgressCount = useMemo(
+    () => periodActivities.filter((a) => a.status === 'in_progress').length,
+    [periodActivities]
+  );
+  const completedCount = useMemo(
+    () => periodActivities.filter((a) => a.status === 'completed').length,
+    [periodActivities]
+  );
+
+  // Lista visible en la tabla según el sub-filtro seleccionado
+  const displayedActivities = useMemo(() => {
+    if (tableSubFilter === 'unpaid') {
+      return periodActivities.filter((a) => a.status !== 'cancelled' && (a.balance_pending ?? 0) > 0);
+    }
+    if (tableSubFilter === 'in_progress') {
+      return periodActivities.filter((a) => a.status === 'in_progress');
+    }
+    if (tableSubFilter === 'completed') {
+      return periodActivities.filter((a) => a.status === 'completed');
+    }
+    return periodActivities;
+  }, [periodActivities, tableSubFilter]);
 
   /**
    * Filtrado rápido por fechas:
@@ -224,7 +261,7 @@ export function DashboardView({
   const columns: ReadonlyArray<DataColumn<Activity>> = [
     {
       key: 'title',
-      header: 'Actividad Reciente',
+      header: 'Actividad',
       primary: true,
       cell: (row) => (
         <span className="block text-left">
@@ -446,28 +483,123 @@ export function DashboardView({
         </div>
       ) : null}
 
-      {/* Actividades Recientes */}
+      {/* Actividades del Período */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-surface-900">Actividades Recientes</h3>
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-surface-900">Actividades del Período</h3>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-surface-100 text-surface-700 border border-rule">
+                {periodActivities.length}
+              </span>
+            </div>
+            <p className="text-xs text-surface-500 mt-0.5">
+              Registros entre el {formatDateEs(appliedFrom)} y el {formatDateEs(appliedTo)} que componen las métricas superiores.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onNavigateToClients}>
               Directorio de clientes →
             </Button>
             <Button variant="ghost" size="sm" onClick={onNavigateToActivities}>
-              {allActivities.length > 5
+              {allActivities.length > periodActivities.length
                 ? `Ver todas las actividades (${allActivities.length}) →`
-                : 'Ver todas las actividades →'}
+                : 'Módulo de actividades →'}
             </Button>
           </div>
+        </div>
+
+        {/* Pestañas de filtrado rápido del período */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-rule pb-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setTableSubFilter('all')}
+            className={cn(
+              'px-2.5 py-1 rounded text-xs font-medium transition-colors',
+              tableSubFilter === 'all'
+                ? 'bg-ink text-white'
+                : 'bg-white border border-rule text-surface-700 hover:bg-surface-50'
+            )}
+          >
+            Todas ({periodActivities.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTableSubFilter('unpaid')}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+              tableSubFilter === 'unpaid'
+                ? 'bg-owed text-white'
+                : 'bg-white border border-rule text-surface-700 hover:bg-surface-50'
+            )}
+          >
+            <span
+              className={cn(
+                'w-1.5 h-1.5 rounded-full',
+                tableSubFilter === 'unpaid' ? 'bg-white' : 'bg-owed'
+              )}
+            />
+            Por Cobrar ({unpaidCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTableSubFilter('in_progress')}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+              tableSubFilter === 'in_progress'
+                ? 'bg-accent text-white'
+                : 'bg-white border border-rule text-surface-700 hover:bg-surface-50'
+            )}
+          >
+            En Proceso ({inProgressCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTableSubFilter('completed')}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+              tableSubFilter === 'completed'
+                ? 'bg-received text-white'
+                : 'bg-white border border-rule text-surface-700 hover:bg-surface-50'
+            )}
+          >
+            Finalizadas ({completedCount})
+          </button>
         </div>
 
         <Panel padding="flush">
           <DataTable
             columns={columns}
-            rows={recentActivities}
+            rows={displayedActivities}
             getRowKey={(row) => row.id}
-            caption="Actividades recientes"
+            caption="Actividades del período"
+            emptyState={
+              <div className="py-8 text-center px-4">
+                <p className="text-sm font-medium text-surface-700">
+                  {tableSubFilter === 'unpaid'
+                    ? '¡Excelente! No hay saldos pendientes por cobrar en este período.'
+                    : tableSubFilter === 'in_progress'
+                    ? 'No hay actividades en proceso en este período.'
+                    : tableSubFilter === 'completed'
+                    ? 'No hay actividades finalizadas en este período.'
+                    : 'No hay actividades registradas en el período seleccionado.'}
+                </p>
+                <p className="text-xs text-surface-500 mt-1">
+                  {tableSubFilter !== 'all' ? (
+                    <button
+                      type="button"
+                      onClick={() => setTableSubFilter('all')}
+                      className="text-accent underline font-medium hover:text-accent/80"
+                    >
+                      Ver todas las del período ({periodActivities.length})
+                    </button>
+                  ) : (
+                    <span>Selecciona otro período de análisis o registra una nueva actividad.</span>
+                  )}
+                </p>
+              </div>
+            }
             onRowClick={(row) => {
               if (onSelectActivity) {
                 onSelectActivity(row.id);
@@ -475,7 +607,11 @@ export function DashboardView({
                 onNavigateToActivities();
               }
             }}
-            rowClassName={(row) => (row.status === 'cancelled' ? 'opacity-65' : undefined)}
+            rowClassName={(row) => {
+              if (row.status === 'cancelled') return 'opacity-60 bg-surface-50/60';
+              if ((row.balance_pending ?? 0) > 0) return 'border-l-2 border-l-owed hover:bg-owed-tint/15';
+              return 'border-l-2 border-l-transparent hover:bg-surface-50';
+            }}
             loading={loading}
           />
         </Panel>
@@ -496,6 +632,7 @@ export function DashboardView({
       <ClientFormDialog
         open={clientFormOpen}
         onClose={() => setClientFormOpen(false)}
+        existingClients={clients}
         onSaved={(saved) => {
           // Crear/editar cliente no altera métricas: se refleja en el estado local.
           setClients((prev) => {
