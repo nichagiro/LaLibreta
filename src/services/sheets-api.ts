@@ -75,13 +75,77 @@ function readEnvValue(name: 'VITE_APPS_SCRIPT_URL' | 'VITE_APP_AUTH_TOKEN'): str
   }
 }
 
+const STORAGE_KEY = 'lalibreta_auth_token';
+// Vigencia de 30 días de inactividad con ventana deslizante (estilo Facebook / Notion)
+const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface StoredSessionData {
+  token: string;
+  expiresAt: number;
+}
+
+/**
+ * Resuelve el token de autenticación inicial considerando:
+ * 1. Variable compilada VITE_APP_AUTH_TOKEN (desarrollo local en .env).
+ * 2. Token temporal en sessionStorage (si no se marcó recordar).
+ * 3. Token persistente en localStorage con ventana deslizante de 30 días (estilo Facebook).
+ */
+function resolveInitialAuthToken(): string {
+  const envToken = readEnvValue('VITE_APP_AUTH_TOKEN');
+  if (envToken) return envToken;
+
+  try {
+    if (typeof window !== 'undefined') {
+      // 1. Revisar sesión temporal de pestaña
+      const sessionToken = sessionStorage.getItem(STORAGE_KEY);
+      if (sessionToken) return sessionToken;
+
+      // 2. Revisar sesión persistente
+      const localData = localStorage.getItem(STORAGE_KEY);
+      if (localData) {
+        let token = localData;
+        let expiresAt = 0;
+
+        if (localData.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(localData) as StoredSessionData;
+            token = parsed.token;
+            expiresAt = parsed.expiresAt;
+          } catch {
+            token = localData;
+          }
+        }
+
+        const now = Date.now();
+        // Si tiene fecha de expiración y ya venció (>30 días sin abrir la app), purgarla
+        if (expiresAt && now > expiresAt) {
+          localStorage.removeItem(STORAGE_KEY);
+          return '';
+        }
+
+        // Si sigue vigente, renovar por otros 30 días por uso activo (Sliding Window)
+        const updatedSession: StoredSessionData = {
+          token,
+          expiresAt: now + SESSION_DURATION_MS,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSession));
+        return token;
+      }
+    }
+  } catch {
+    // Entornos sin acceso a storage (ej. SSR o Node)
+  }
+
+  return '';
+}
+
 class SheetsApiClient {
   private endpointUrl: string;
   private authToken: string;
 
   constructor() {
     this.endpointUrl = readEnvValue('VITE_APPS_SCRIPT_URL');
-    this.authToken = readEnvValue('VITE_APP_AUTH_TOKEN');
+    this.authToken = resolveInitialAuthToken();
   }
 
   /**
@@ -93,8 +157,82 @@ class SheetsApiClient {
     this.authToken = token;
   }
 
+  /**
+   * Guarda el token en memoria y en el almacenamiento del navegador.
+   * Si `remember` es true, lo guarda en localStorage con ventana deslizante de 30 días;
+   * si es false, lo guarda en sessionStorage (vigente solo mientras dure la pestaña).
+   */
+  public saveAuthToken(token: string, remember = true): void {
+    this.authToken = token;
+    try {
+      if (typeof window !== 'undefined') {
+        if (remember) {
+          const sessionData: StoredSessionData = {
+            token,
+            expiresAt: Date.now() + SESSION_DURATION_MS,
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
+          sessionStorage.removeItem(STORAGE_KEY);
+        } else {
+          sessionStorage.setItem(STORAGE_KEY, token);
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      }
+    } catch {
+      // Ignorar fallas de acceso a storage
+    }
+  }
+
+  /**
+   * Elimina el token guardado en el navegador y en la instancia del cliente.
+   */
+  public clearAuthToken(): void {
+    this.authToken = '';
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(STORAGE_KEY);
+      }
+    } catch {
+      // Ignorar fallas de acceso a storage
+    }
+  }
+
+  /**
+   * Indica si el token actual proviene de una variable compilada (.env).
+   */
+  public hasEnvToken(): boolean {
+    return Boolean(readEnvValue('VITE_APP_AUTH_TOKEN'));
+  }
+
+  /**
+   * Prueba la validez de un token ejecutando una acción ligera de ping contra Apps Script.
+   */
+  public async testConnection(token: string): Promise<boolean> {
+    if (!this.endpointUrl) {
+      throw this.buildError(
+        'MISSING_ENDPOINT',
+        'La URL del servicio de Apps Script no está configurada.'
+      );
+    }
+
+    const previousToken = this.authToken;
+    this.authToken = token;
+    try {
+      await this.execute('ping');
+      return true;
+    } catch (err: unknown) {
+      this.authToken = previousToken;
+      throw err;
+    }
+  }
+
   public isConfigured(): boolean {
     return Boolean(this.endpointUrl && this.authToken);
+  }
+
+  public getEndpointUrl(): string {
+    return this.endpointUrl;
   }
 
   /**

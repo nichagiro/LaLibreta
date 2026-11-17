@@ -11,6 +11,7 @@ import { DashboardView } from '@/features/dashboard/DashboardView';
 import { ActivitiesView } from '@/features/activities/ActivitiesView';
 import { ClientsView } from '@/features/clients/ClientsView';
 import { SettingsView } from '@/features/settings/SettingsView';
+import { AccessGate } from '@/features/auth/AccessGate';
 import { api } from '@/services/api';
 import { sheetsApi } from '@/services/sheets-api';
 import { navigateTo, useAppRoute, type AppRoute } from '@/router';
@@ -29,7 +30,9 @@ export const App: React.FC = () => {
   const activeRoute = useAppRoute();
   // El modo es fijo: lo decide VITE_DATA_SOURCE en tiempo de compilación.
   const isMockMode = api.isMockMode();
-  const sheetsConfigured = sheetsApi.isConfigured();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return isMockMode || sheetsApi.isConfigured();
+  });
   const [selectedClientIdForNewActivity, setSelectedClientIdForNewActivity] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,6 +54,11 @@ export const App: React.FC = () => {
         <UiGallery />
       </Suspense>
     );
+  }
+
+  // Si no está en modo mock y no está autenticado, solicita la clave personal de acceso
+  if (!isMockMode && !isAuthenticated) {
+    return <AccessGate onAuthenticated={() => setIsAuthenticated(true)} />;
   }
 
   const navItems: ReadonlyArray<NavItem> = [
@@ -128,17 +136,14 @@ export const App: React.FC = () => {
           </div>
         ) : null}
 
-        {/* Aviso estático cuando el modo de producción está activo pero falta configuración */}
-        {!isMockMode && !sheetsConfigured ? (
+        {/* Aviso estático cuando el modo de producción está activo pero falta la URL del endpoint */}
+        {!isMockMode && !sheetsApi.getEndpointUrl() ? (
           <div
             role="alert"
             className="p-3 bg-red-50 border border-red-300 rounded-lg text-xs text-red-900"
           >
             <strong>Configuración incompleta:</strong> el modo de producción está activo, pero
-            faltan <code className="font-mono">VITE_APPS_SCRIPT_URL</code> y/o{' '}
-            <code className="font-mono">VITE_APP_AUTH_TOKEN</code> en el archivo{' '}
-            <code className="font-mono">.env</code>. No hay datos de respaldo ni conmutación
-            automática: las operaciones fallarán hasta completar la configuración.
+            falta configurar <code className="font-mono">VITE_APPS_SCRIPT_URL</code>.
           </div>
         ) : null}
 
@@ -171,7 +176,9 @@ export const App: React.FC = () => {
             />
           ) : null}
 
-          {activeRoute === 'settings' ? <SettingsView /> : null}
+          {activeRoute === 'settings' ? (
+            <SettingsView onLogout={() => setIsAuthenticated(false)} />
+          ) : null}
         </ErrorBoundary>
       </div>
     </AppShell>
