@@ -20,6 +20,133 @@ function sanitizeText(str: string | undefined | null): string {
 }
 
 /**
+ * Decodifica una cadena Base64 a bytes binarios Uint8Array compatible con navegador y Node.js.
+ */
+function decodeBase64(base64: string): Uint8Array {
+  const clean = base64.replace(/\s/g, '');
+  if (typeof atob === 'function') {
+    const binary = atob(clean);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+  const globalBuffer = (globalThis as unknown as { Buffer?: { from: (s: string, enc: string) => Uint8Array } }).Buffer;
+  if (globalBuffer) {
+    return new Uint8Array(globalBuffer.from(clean, 'base64'));
+  }
+  return new Uint8Array(0);
+}
+
+/**
+ * Intenta rasterizar una URL de imagen a bytes PNG mediante un elemento Canvas del navegador.
+ * Permite compatibilidad con URLs remotas y formatos modernos (WebP, SVG) en el cliente.
+ */
+function rasterizeUrlViaCanvas(url: string): Promise<Uint8Array | null> {
+  if (typeof document === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(null);
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const commaIdx = dataUrl.indexOf(',');
+        if (commaIdx !== -1) {
+          resolve(decodeBase64(dataUrl.slice(commaIdx + 1)));
+        } else {
+          resolve(null);
+        }
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/**
+ * Carga e incrusta el logo del emisor (URL o Base64) en pdf-lib. Si falla o no está presente,
+ * retorna null para permitir el monograma de respaldo.
+ */
+async function loadLogoImage(pdfDoc: PDFDocument, logoSrc: string | undefined) {
+  if (!logoSrc || !logoSrc.trim()) return null;
+  const raw = logoSrc.trim();
+
+  try {
+    let bytes: Uint8Array | null = null;
+
+    if (raw.startsWith('data:')) {
+      const commaIdx = raw.indexOf(',');
+      if (commaIdx !== -1) {
+        bytes = decodeBase64(raw.slice(commaIdx + 1));
+      }
+    } else if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      // 1. Intentar fetch directo (rápido si el servidor tiene cabeceras CORS)
+      if (typeof fetch === 'function') {
+        try {
+          const resp = await fetch(raw);
+          if (resp.ok) {
+            const buffer = await resp.arrayBuffer();
+            bytes = new Uint8Array(buffer);
+          }
+        } catch {
+          // Ignorar fallo de CORS/red
+        }
+      }
+      // 2. Si fetch directo falló por CORS, usar proxy público de imágenes con CORS abierto (convierte además WebP/SVG a PNG)
+      if (!bytes || bytes.length === 0) {
+        if (typeof fetch === 'function') {
+          try {
+            const proxyUrl = `https://images.weserv.nl/?url=${encodeURIComponent(raw)}&output=png`;
+            const resp = await fetch(proxyUrl);
+            if (resp.ok) {
+              const buffer = await resp.arrayBuffer();
+              bytes = new Uint8Array(buffer);
+            }
+          } catch {
+            // Ignorar
+          }
+        }
+      }
+      // 3. Respaldo final por Canvas en el navegador
+      if ((!bytes || bytes.length === 0) && typeof document !== 'undefined') {
+        bytes = await rasterizeUrlViaCanvas(raw);
+      }
+    } else if (/^[A-Za-z0-9+/=]+$/.test(raw) && raw.length > 50) {
+      bytes = decodeBase64(raw);
+    }
+
+    if (!bytes || bytes.length === 0) return null;
+
+    // Detectar PNG por magic bytes: 0x89 0x50 0x4E 0x47
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+      return await pdfDoc.embedPng(bytes);
+    }
+    // Detectar JPEG por magic bytes: 0xFF 0xD8
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+      return await pdfDoc.embedJpg(bytes);
+    }
+
+    try {
+      return await pdfDoc.embedPng(bytes);
+    } catch {
+      return await pdfDoc.embedJpg(bytes);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Divide un texto en líneas respetando el ancho máximo especificado.
  */
 function wrapText(
@@ -181,60 +308,58 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   // 1. Encabezado Principal
   // ==========================================
 
-  // Monograma / Caja del emisor
-  const initials = (data.issuer.name || 'DJ')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('');
+  // ==========================================
+  // 1. Encabezado Principal (Fila superior: Logo a la izquierda, Referencia a la derecha)
+  // ==========================================
 
-  page.drawRectangle({
-    x: marginX,
-    y: y - 36,
-    width: 36,
-    height: 36,
-    color: colorInk,
-  });
+  let logoRendered = false;
 
-  const initW = fontBold.widthOfTextAtSize(initials, 13);
-  page.drawText(initials, {
-    x: marginX + (36 - initW) / 2,
-    y: y - 24,
-    size: 13,
-    font: fontBold,
-    color: rgb(1, 1, 1),
-  });
+  if (data.issuer.logo) {
+    const logoImg = await loadLogoImage(pdfDoc, data.issuer.logo);
+    if (logoImg) {
+      // Soporte flexible para logos horizontales o cuadrados (hasta 180 pt de ancho x 42 pt de alto)
+      const maxW = 180;
+      const maxH = 42;
+      const scale = Math.min(maxW / logoImg.width, maxH / logoImg.height);
+      const imgW = logoImg.width * scale;
+      const imgH = logoImg.height * scale;
+      const imgX = marginX;
+      // Centrado vertical respecto al bloque del encabezado (de y - 42 a y)
+      const imgY = y - 42 + (42 - imgH) / 2;
 
-  // Datos del emisor
-  page.drawText(sanitizeText(data.issuer.name || 'Profesional Independiente'), {
-    x: marginX + 46,
-    y: y - 10,
-    size: 13,
-    font: fontBold,
-    color: colorInk,
-  });
-
-  if (data.issuer.business_name) {
-    page.drawText(sanitizeText(data.issuer.business_name), {
-      x: marginX + 46,
-      y: y - 23,
-      size: 10,
-      font: fontRegular,
-      color: colorSubtle,
-    });
+      page.drawImage(logoImg, {
+        x: imgX,
+        y: imgY,
+        width: imgW,
+        height: imgH,
+      });
+      logoRendered = true;
+    }
   }
 
-  const issuerContactParts: string[] = [];
-  if (data.issuer.phone) issuerContactParts.push(data.issuer.phone);
-  if (data.issuer.email) issuerContactParts.push(data.issuer.email);
-  if (issuerContactParts.length > 0) {
-    page.drawText(sanitizeText(issuerContactParts.join('  ·  ')), {
-      x: marginX + 46,
-      y: y - 35,
-      size: 8.5,
-      font: fontRegular,
-      color: colorMuted,
+  if (!logoRendered) {
+    const initials = (data.issuer.name || 'DJ')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0].toUpperCase())
+      .join('');
+
+    page.drawRectangle({
+      x: marginX,
+      y: y - 38,
+      width: 38,
+      height: 38,
+      color: colorInk,
+    });
+
+    const initW = fontBold.widthOfTextAtSize(initials, 14);
+    page.drawText(initials, {
+      x: marginX + (38 - initW) / 2,
+      y: y - 25,
+      size: 14,
+      font: fontBold,
+      color: rgb(1, 1, 1),
     });
   }
 
@@ -243,7 +368,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   const docTypeW = fontRegular.widthOfTextAtSize(docTypeTitle, 9);
   page.drawText(docTypeTitle, {
     x: marginX + contentWidth - docTypeW,
-    y: y - 10,
+    y: y - 8,
     size: 9,
     font: fontRegular,
     color: colorMuted,
@@ -257,7 +382,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   }
   page.drawText(displayRefCode, {
     x: marginX + contentWidth - codeW,
-    y: y - 24,
+    y: y - 22,
     size: refFontSize,
     font: fontBold,
     color: colorInk,
@@ -267,7 +392,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
   const emittedW = fontRegular.widthOfTextAtSize(emittedStr, 8.5);
   page.drawText(emittedStr, {
     x: marginX + contentWidth - emittedW,
-    y: y - 36,
+    y: y - 34,
     size: 8.5,
     font: fontRegular,
     color: colorMuted,
@@ -283,14 +408,14 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     color: colorInk,
   });
 
-  y -= 22;
+  y -= 18;
 
   // ==========================================
-  // 2. Destinatario (Cliente) y Metadatos de Actividad
+  // 2. Participantes: Emisor (De) y Destinatario (Para)
   // ==========================================
 
-  // Para: Cliente
-  page.drawText('Para', {
+  // Columna Izquierda: Emisor (De)
+  page.drawText('De', {
     x: marginX,
     y,
     size: 8.5,
@@ -298,56 +423,83 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     color: colorMuted,
   });
 
-  page.drawText(sanitizeText(data.client.name), {
+  page.drawText(sanitizeText(data.issuer.name || 'Profesional Independiente'), {
     x: marginX,
-    y: y - 14,
-    size: 11,
+    y: y - 13,
+    size: 10.5,
+    font: fontBold,
+    color: colorInk,
+  });
+
+  let nextIssuerY = y - 25;
+  if (data.issuer.business_name) {
+    page.drawText(sanitizeText(data.issuer.business_name), {
+      x: marginX,
+      y: nextIssuerY,
+      size: 9,
+      font: fontRegular,
+      color: colorSubtle,
+    });
+    nextIssuerY -= 12;
+  }
+
+  const issuerContactParts: string[] = [];
+  if (data.issuer.phone) issuerContactParts.push(data.issuer.phone);
+  if (data.issuer.email) issuerContactParts.push(data.issuer.email);
+  if (issuerContactParts.length > 0) {
+    page.drawText(sanitizeText(issuerContactParts.join('  ·  ')), {
+      x: marginX,
+      y: nextIssuerY,
+      size: 8.5,
+      font: fontRegular,
+      color: colorMuted,
+    });
+  }
+
+  // Columna Derecha: Cliente (Para) y fecha/categoría
+  const paraLabel = 'Para';
+  const paraLabelW = fontRegular.widthOfTextAtSize(paraLabel, 8.5);
+  page.drawText(paraLabel, {
+    x: marginX + contentWidth - paraLabelW,
+    y,
+    size: 8.5,
+    font: fontRegular,
+    color: colorMuted,
+  });
+
+  const clientNameStr = sanitizeText(data.client.name);
+  const clientNameW = fontBold.widthOfTextAtSize(clientNameStr, 10.5);
+  page.drawText(clientNameStr, {
+    x: marginX + contentWidth - clientNameW,
+    y: y - 13,
+    size: 10.5,
     font: fontBold,
     color: colorInk,
   });
 
   const clientContact = [data.client.phone, data.client.email].filter(Boolean).join('  ·  ') || '—';
-  page.drawText(sanitizeText(clientContact), {
-    x: marginX,
-    y: y - 27,
+  const clientContactStr = sanitizeText(clientContact);
+  const clientContactW = fontRegular.widthOfTextAtSize(clientContactStr, 9);
+  page.drawText(clientContactStr, {
+    x: marginX + contentWidth - clientContactW,
+    y: y - 25,
     size: 9,
     font: fontRegular,
     color: colorSubtle,
   });
 
-  // Lado derecho: Fecha y categoría (alineados estrictamente a la derecha)
-  const dateLabel = 'Fecha de la actividad';
-  const dateLabelW = fontRegular.widthOfTextAtSize(dateLabel, 8.5);
-  page.drawText(dateLabel, {
-    x: marginX + contentWidth - dateLabelW,
-    y,
+  const actTypeLabel = data.activity.type === 'service' ? 'Servicio' : 'Venta';
+  const dateCategoryStr = sanitizeText(`${formatDateEs(data.activity.date)}  ·  ${actTypeLabel} · ${data.activity.category_name}`);
+  const dateCatW = fontRegular.widthOfTextAtSize(dateCategoryStr, 8.5);
+  page.drawText(dateCategoryStr, {
+    x: marginX + contentWidth - dateCatW,
+    y: y - 37,
     size: 8.5,
     font: fontRegular,
     color: colorMuted,
   });
 
-  const dateValueStr = formatDateEs(data.activity.date);
-  const dateValueW = fontBold.widthOfTextAtSize(dateValueStr, 11);
-  page.drawText(dateValueStr, {
-    x: marginX + contentWidth - dateValueW,
-    y: y - 14,
-    size: 11,
-    font: fontBold,
-    color: colorInk,
-  });
-
-  const actTypeLabel = data.activity.type === 'service' ? 'Servicio' : 'Venta';
-  const actCatStr = sanitizeText(`${actTypeLabel}  ·  ${data.activity.category_name}`);
-  const actCatW = fontRegular.widthOfTextAtSize(actCatStr, 9);
-  page.drawText(actCatStr, {
-    x: marginX + contentWidth - actCatW,
-    y: y - 27,
-    size: 9,
-    font: fontRegular,
-    color: colorSubtle,
-  });
-
-  y -= 42;
+  y -= 48;
 
   // Línea separadora
   page.drawLine({
@@ -497,7 +649,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
       font: fontRegular,
       color: colorMuted,
     });
-    y -= 16;
+    y -= 26;
   } else {
     // Encabezado de tabla de pagos
     page.drawLine({
@@ -583,9 +735,10 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
       color: colorInk,
     });
 
+    const totRecY = y - 8;
     page.drawText('Total recibido', {
       x: marginX,
-      y: y - 8,
+      y: totRecY,
       size: 9.5,
       font: fontBold,
       color: colorInk,
@@ -595,13 +748,14 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     const totRecW = fontBold.widthOfTextAtSize(totRecStr, 9.5);
     page.drawText(totRecStr, {
       x: marginX + contentWidth - totRecW,
-      y: y - 8,
+      y: totRecY,
       size: 9.5,
       font: fontBold,
       color: colorInk,
     });
 
-    y -= 24;
+    // Separación suficiente entre el total recibido y la siguiente sección (observaciones / formas de pago)
+    y = totRecY - 30;
   }
 
   // ==========================================
@@ -658,7 +812,7 @@ export async function buildActivityPdf(data: ActivityPdfData): Promise<Uint8Arra
     });
 
     page.drawText('Formas de pago', {
-      x: marginX + 12,
+      x: marginX + 10,
       y: y - 14,
       size: 8.5,
       font: fontBold,

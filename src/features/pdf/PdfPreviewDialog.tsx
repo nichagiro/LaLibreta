@@ -26,17 +26,20 @@ export function PdfPreviewDialog({
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [logoError, setLogoError] = useState(false);
 
   useEffect(() => {
     if (!open || !activityId) {
       setData(null);
       setError(null);
+      setLogoError(false);
       return;
     }
 
     let isMounted = true;
     setLoading(true);
     setError(null);
+    setLogoError(false);
 
     api
       .getActivityPdfData(activityId)
@@ -131,30 +134,28 @@ export function PdfPreviewDialog({
           /* Hoja de previsualización que replica fielmente el diseño de PdfReferenceSheet */
           <div className="border border-rule bg-white p-6 sm:p-8 text-ink rounded-lg shadow-sm">
             {/* Cabecera */}
-            <div className="flex items-start justify-between gap-4 border-b-2 border-ink pb-4">
-              <div className="flex items-start gap-3">
-                <span
-                  aria-hidden="true"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ink text-sm font-semibold text-white"
-                >
-                  {(data.issuer.name || 'DJ')
-                    .split(' ')
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .map((w) => w[0].toUpperCase())
-                    .join('')}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold leading-tight">{data.issuer.name}</p>
-                  {data.issuer.business_name ? (
-                    <p className="text-xs text-surface-600 leading-tight">
-                      {data.issuer.business_name}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-[11px] text-surface-500">
-                    {[data.issuer.phone, data.issuer.email].filter(Boolean).join(' · ')}
-                  </p>
-                </div>
+            <div className="flex items-center justify-between gap-4 border-b-2 border-ink pb-4">
+              <div className="flex items-center min-w-0">
+                {data.issuer.logo && !logoError ? (
+                  <img
+                    src={data.issuer.logo}
+                    alt={data.issuer.business_name || data.issuer.name || 'Logo'}
+                    className="h-11 max-w-[180px] w-auto shrink-0 object-contain object-left"
+                    onError={() => setLogoError(true)}
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ink text-sm font-semibold text-white"
+                  >
+                    {(data.issuer.name || 'DJ')
+                      .split(' ')
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((w) => w[0].toUpperCase())
+                      .join('')}
+                  </span>
+                )}
               </div>
 
               <div className="shrink-0 text-right">
@@ -170,19 +171,27 @@ export function PdfPreviewDialog({
               </div>
             </div>
 
-            {/* Destinatario y Fecha */}
-            <div className="grid grid-cols-2 gap-4 pt-4 text-xs">
+            {/* Participantes: Emisor (De) y Destinatario (Para) */}
+            <div className="grid grid-cols-2 gap-4 pt-4 text-xs border-b border-rule pb-4">
               <div>
-                <p className="text-[10px] text-surface-500">Para</p>
-                <p className="text-sm font-semibold">{data.client.name}</p>
+                <p className="text-[10px] uppercase tracking-wider text-surface-500 font-medium">De</p>
+                <p className="mt-0.5 text-sm font-semibold text-ink">{data.issuer.name}</p>
+                {data.issuer.business_name ? (
+                  <p className="text-xs text-surface-600">{data.issuer.business_name}</p>
+                ) : null}
+                <p className="mt-0.5 text-[11px] text-surface-500">
+                  {[data.issuer.phone, data.issuer.email].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-wider text-surface-500 font-medium">Para</p>
+                <p className="mt-0.5 text-sm font-semibold text-ink">{data.client.name}</p>
                 <p className="text-[11px] text-surface-600">
                   {[data.client.phone, data.client.email].filter(Boolean).join(' · ') || '—'}
                 </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-surface-500">Fecha de la actividad</p>
-                <p className="text-sm font-semibold">{formatDateEs(data.activity.date)}</p>
-                <p className="text-[11px] text-surface-600">
+                <p className="mt-0.5 text-[11px] text-surface-500">
+                  {formatDateEs(data.activity.date)} ·{' '}
                   {data.activity.type === 'service' ? 'Servicio' : 'Venta'} ·{' '}
                   {data.activity.category_name}
                 </p>
